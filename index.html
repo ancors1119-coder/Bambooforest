@@ -1311,6 +1311,380 @@
             );
         };
 
+        // ── 대나무숲 게시판 ──────────────────────────────────────────
+        // 고충 접수가 '관리자에게만' 가는 1:1 창구라면, 이 게시판은 구성원 모두가 읽는
+        // 공개 공간이다. 그래서 익명성 설계가 다르다.
+        //
+        //  - 작성자 uid 를 저장하지 않는다. 글마다 다른 nonce 와 섞은 해시(익명 태그)만 남긴다.
+        //    태그가 글마다 달라지므로, 같은 사람이 쓴 다른 글끼리 묶어낼 수 없다.
+        //    (전체 공통 태그를 쓰면 글 여러 개를 모아 글쓴이를 추정할 수 있다)
+        //  - 소속 부서를 받지 않는다. 인원이 적은 팀에서는 부서만으로 사람이 특정된다.
+        //  - 대신 공개 공간인 만큼 신고와 관리자 조치 수단을 둔다.
+        const BOARD_CATEGORIES = [
+            { value: 'free',       label: '자유' },
+            { value: 'suggestion', label: '제안' },
+            { value: 'praise',     label: '칭찬' },
+            { value: 'question',   label: '질문' }
+        ];
+        const BOARD_SALT = 'bambooforest-board-v1';
+        const BOARD_BLIND_THRESHOLD = 3;   // 신고 3건이면 자동 블라인드 후 관리자 검토
+
+        const getBoardCategory = (value) => BOARD_CATEGORIES.find(c => c.value === value) || BOARD_CATEGORIES[0];
+
+        const makeNonce = () => {
+            const bytes = new Uint8Array(16);
+            window.crypto.getRandomValues(bytes);
+            return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+
+        const makeAnonTag = async (nonce, uid) => {
+            if (!window.crypto?.subtle) throw new Error('보안 연결(HTTPS)에서만 게시판을 사용할 수 있습니다.');
+            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${uid}`);
+            const buf = await window.crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+        };
+
+        const timeAgo = (value) => {
+            const ms = value?.seconds ? value.seconds * 1000 : Date.parse(value);
+            if (!ms || Number.isNaN(ms)) return "-";
+            const diff = Math.floor((Date.now() - ms) / 1000);
+            if (diff < 60) return "방금";
+            if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+            if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+            return new Date(ms).toLocaleDateString();
+        };
+
+        const BoardView = ({ user, role }) => {
+            const isAdmin = role === 'admin';
+            const [posts, setPosts] = useState([]);
+            const [comments, setComments] = useState([]);
+            const [selectedId, setSelectedId] = useState(null);
+            const [myTags, setMyTags] = useState({});      // postId -> 내 익명 태그
+            const [composing, setComposing] = useState(false);
+            const [draft, setDraft] = useState({ category: 'free', content: '' });
+            const [sending, setSending] = useState(false);
+            const [sort, setSort] = useState('new');
+            const [filter, setFilter] = useState('all');
+            const [commentDraft, setCommentDraft] = useState("");
+
+            const col = (name) => window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', name);
+            const ref = (name, id) => window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', name, id);
+
+            useEffect(() => {
+                if (!window.db) return;
+                return window.firestore.onSnapshot(window.firestore.query(col('board_posts')), (snap) => {
+                    setPosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                });
+            }, []);
+
+            // 목록 카드에 댓글 수를 보여주려면 어차피 전체가 필요하므로,
+            // 글마다 따로 구독하지 않고 한 번에 받아 화면에서 걸러 쓴다.
+            useEffect(() => {
+                if (!window.db) return;
+                return window.firestore.onSnapshot(window.firestore.query(col('board_comments')), (snap) => {
+                    setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                });
+            }, []);
+
+            const commentCountOf = (postId) => comments.filter(c => c.postId === postId).length;
+
+            // 글마다 태그가 다르므로, 보이는 글들의 내 태그를 한 번에 계산해 둔다.
+            useEffect(() => {
+                if (!user || posts.length === 0) return;
+                let alive = true;
+                (async () => {
+                    const next = {};
+                    for (const post of posts) {
+                        if (!post.nonce) continue;
+                        try { next[post.id] = await makeAnonTag(post.nonce, user.uid); } catch { /* HTTPS 아님 */ }
+                    }
+                    if (alive) setMyTags(next);
+                })();
+                return () => { alive = false; };
+            }, [posts, user]);
+
+            const selected = posts.find(p => p.id === selectedId) || null;
+
+            const visiblePosts = useMemo(() => {
+                // 블라인드된 글은 관리자와 작성자 본인에게만 남긴다.
+                let list = posts.filter(p => !p.hidden || isAdmin || myTags[p.id] === p.authorTag);
+                if (filter !== 'all') list = list.filter(p => p.category === filter);
+                const at = (p) => p.createdAt?.seconds || 0;
+                list.sort((a, b) => sort === 'like'
+                    ? (b.likedBy?.length || 0) - (a.likedBy?.length || 0) || at(b) - at(a)
+                    : at(b) - at(a));
+                return list;
+            }, [posts, filter, sort, isAdmin, myTags]);
+
+            const submitPost = async (e) => {
+                e.preventDefault();
+                const content = draft.content.trim();
+                if (!content || sending) return;
+                setSending(true);
+                try {
+                    const nonce = makeNonce();
+                    await window.firestore.addDoc(col('board_posts'), {
+                        content,
+                        category: draft.category,
+                        nonce,
+                        authorTag: await makeAnonTag(nonce, user.uid),
+                        likedBy: [],
+                        reportedBy: [],
+                        hidden: false,
+                        createdAt: window.firestore.serverTimestamp()
+                    });
+                    setDraft({ category: 'free', content: '' });
+                    setComposing(false);
+                } catch (err) {
+                    alert("등록 실패: " + err.message);
+                } finally {
+                    setSending(false);
+                }
+            };
+
+            const submitComment = async (e) => {
+                e.preventDefault();
+                const content = commentDraft.trim();
+                if (!content || !selected || sending) return;
+                setSending(true);
+                try {
+                    await window.firestore.addDoc(col('board_comments'), {
+                        postId: selected.id,
+                        content,
+                        // 댓글도 같은 글의 nonce 를 쓰므로, 같은 글 안에서만 동일인이 식별된다.
+                        authorTag: await makeAnonTag(selected.nonce, user.uid),
+                        createdAt: window.firestore.serverTimestamp()
+                    });
+                    setCommentDraft("");
+                } catch (err) {
+                    alert("등록 실패: " + err.message);
+                } finally {
+                    setSending(false);
+                }
+            };
+
+            const toggleLike = async (post) => {
+                const tag = myTags[post.id];
+                if (!tag) return;
+                const likedBy = post.likedBy || [];
+                await window.firestore.updateDoc(ref('board_posts', post.id), {
+                    likedBy: likedBy.includes(tag) ? likedBy.filter(t => t !== tag) : [...likedBy, tag]
+                });
+            };
+
+            const reportPost = async (post) => {
+                const tag = myTags[post.id];
+                if (!tag) return;
+                const reportedBy = post.reportedBy || [];
+                if (reportedBy.includes(tag)) return alert("이미 신고하신 글입니다.");
+                if (!confirm("이 글을 신고하시겠습니까? 신고가 누적되면 자동으로 가려지고 관리자가 검토합니다.")) return;
+                const next = [...reportedBy, tag];
+                await window.firestore.updateDoc(ref('board_posts', post.id), {
+                    reportedBy: next,
+                    hidden: post.hidden || next.length >= BOARD_BLIND_THRESHOLD
+                });
+                alert("신고가 접수되었습니다.");
+            };
+
+            const removePost = async (post) => {
+                if (!confirm("이 글을 삭제하시겠습니까? 삭제된 글은 복구할 수 없습니다.")) return;
+                for (const c of comments.filter(c => c.postId === post.id)) {
+                    await window.firestore.deleteDoc(ref('board_comments', c.id));
+                }
+                await window.firestore.deleteDoc(ref('board_posts', post.id));
+                setSelectedId(null);
+            };
+
+            const setHidden = async (post, hidden) => {
+                await window.firestore.updateDoc(ref('board_posts', post.id), { hidden });
+            };
+
+            const removeComment = async (comment) => {
+                if (!confirm("이 댓글을 삭제하시겠습니까?")) return;
+                await window.firestore.deleteDoc(ref('board_comments', comment.id));
+            };
+
+            // ── 글 상세 ──────────────────────────────────────────────
+            if (selected) {
+                const myTag = myTags[selected.id];
+                const mine = myTag && myTag === selected.authorTag;
+                const liked = myTag && (selected.likedBy || []).includes(myTag);
+                const sorted = comments.filter(c => c.postId === selected.id)
+                    .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                // 같은 글 안에서 등장 순서대로 익명1, 익명2… 를 붙인다.
+                const order = [];
+                sorted.forEach(c => { if (c.authorTag && !order.includes(c.authorTag)) order.push(c.authorTag); });
+                const nameOf = (tag) => tag === selected.authorTag ? '작성자' : `익명${order.indexOf(tag) + 1}`;
+
+                // 목록에서 가려도 상세로 들어오면 그대로 읽히면 안 된다.
+                // (글을 열어둔 채로 블라인드된 경우도 여기서 막힌다)
+                if (selected.hidden && !isAdmin && !mine) {
+                    return (
+                        <div className="max-w-3xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
+                            <button onClick={() => setSelectedId(null)} className="text-sm text-slate-500 hover:text-brand-600 font-bold">← 목록으로</button>
+                            <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-10 text-center">
+                                <div className="w-12 h-12 bg-red-50 border border-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <Icon name="eye-off" size={22} className="text-red-600" />
+                                </div>
+                                <p className="font-bold text-slate-800">가려진 글입니다</p>
+                                <p className="text-sm text-slate-500 mt-1.5">신고가 누적되어 관리자 검토 중입니다.</p>
+                            </div>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className="max-w-3xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
+                        <button onClick={() => setSelectedId(null)} className="text-sm text-slate-500 hover:text-brand-600 font-bold">← 목록으로</button>
+
+                        <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-5 md:p-7">
+                            {selected.hidden && (
+                                <div className="mb-4 bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-sm text-red-700 font-bold">
+                                    신고 누적으로 가려진 글입니다. {isAdmin ? "관리자에게만 보입니다." : ""}
+                                </div>
+                            )}
+                            <div className="flex items-center gap-2 mb-3 flex-wrap">
+                                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100">{getBoardCategory(selected.category).label}</span>
+                                <span className="text-xs text-slate-400">{timeAgo(selected.createdAt)}</span>
+                                {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
+                            </div>
+                            <p className="text-[15px] text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{selected.content}</p>
+
+                            <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-100 flex-wrap">
+                                <button onClick={() => toggleLike(selected)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold border transition-colors ${liked ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300 hover:text-brand-600'}`}>
+                                    <Icon name="heart" size={15} /> 공감 {(selected.likedBy || []).length}
+                                </button>
+                                <span className="flex items-center gap-1.5 px-3 py-2 text-sm font-bold text-slate-500">
+                                    <Icon name="message-circle" size={15} /> 댓글 {sorted.length}
+                                </span>
+                                <div className="flex-1"></div>
+                                {!mine && (
+                                    <button onClick={() => reportPost(selected)} className="text-xs font-bold text-slate-400 hover:text-red-600 px-2 py-2">신고</button>
+                                )}
+                                {(mine || isAdmin) && (
+                                    <button onClick={() => removePost(selected)} className="text-xs font-bold text-red-700 border border-red-200 px-3 py-2 rounded-lg hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors">삭제</button>
+                                )}
+                                {isAdmin && (
+                                    <button onClick={() => setHidden(selected, !selected.hidden)} className="text-xs font-bold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100">
+                                        {selected.hidden ? "숨김 해제" : "숨기기"}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-5 md:p-7">
+                            <h3 className="font-bold text-slate-800 mb-4">댓글 {sorted.length}</h3>
+                            <div className="space-y-3 mb-4">
+                                {sorted.length === 0 && <p className="text-sm text-slate-500">첫 댓글을 남겨보세요.</p>}
+                                {sorted.map(c => {
+                                    const isMine = myTag && c.authorTag === myTag;
+                                    return (
+                                        <div key={c.id} className="border border-slate-100 bg-slate-50 rounded-xl px-4 py-3">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className={`text-xs font-bold ${c.authorTag === selected.authorTag ? 'text-brand-700' : 'text-slate-600'}`}>{nameOf(c.authorTag)}</span>
+                                                <span className="text-[11px] text-slate-400">{timeAgo(c.createdAt)}</span>
+                                                <div className="flex-1"></div>
+                                                {(isMine || isAdmin) && (
+                                                    <button onClick={() => removeComment(c)} className="text-[11px] font-bold text-slate-400 hover:text-red-600">삭제</button>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{c.content}</p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <form onSubmit={submitComment} className="flex gap-2">
+                                <input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="익명으로 댓글 남기기…" className="flex-1 border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" />
+                                <button type="submit" disabled={!commentDraft.trim() || sending} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">등록</button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ── 목록 ─────────────────────────────────────────────────
+            return (
+                <div className="max-w-3xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
+                    <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-5 md:p-7">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                                <h1 className="text-xl md:text-2xl font-bold text-slate-800">대나무숲 게시판</h1>
+                                <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
+                                    누구나 익명으로 쓰고 함께 읽는 공간입니다. 작성자 정보는 저장하지 않으며, 글마다 다른 익명 표식이 부여됩니다.
+                                </p>
+                            </div>
+                            {!composing && (
+                                <button onClick={() => setComposing(true)} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 shadow-brand transition-colors flex items-center gap-1.5 whitespace-nowrap">
+                                    <Icon name="pencil" size={15} /> 글쓰기
+                                </button>
+                            )}
+                        </div>
+
+                        {composing && (
+                            <form onSubmit={submitPost} className="mt-5 border-t border-slate-100 pt-5">
+                                <div className="flex gap-2 mb-3 flex-wrap">
+                                    {BOARD_CATEGORIES.map(c => (
+                                        <button key={c.value} type="button" onClick={() => setDraft({ ...draft, category: c.value })} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${draft.category === c.value ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300'}`}>{c.label}</button>
+                                    ))}
+                                </div>
+                                <textarea value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} rows="5" placeholder="하고 싶은 이야기를 자유롭게 남겨주세요. 특정 개인을 알아볼 수 있는 내용은 피해주세요." className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-sm resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" autoFocus />
+                                <div className="flex items-center gap-2 mt-3">
+                                    <p className="text-xs text-slate-400 flex-1">등록 후에는 이 브라우저에서만 삭제할 수 있습니다.</p>
+                                    <button type="button" onClick={() => { setComposing(false); setDraft({ category: 'free', content: '' }); }} className="px-4 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">취소</button>
+                                    <button type="submit" disabled={!draft.content.trim() || sending} className="bg-brand-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">{sending ? "등록 중" : "등록"}</button>
+                                </div>
+                            </form>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${filter === 'all' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300'}`}>전체</button>
+                        {BOARD_CATEGORIES.map(c => (
+                            <button key={c.value} onClick={() => setFilter(c.value)} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${filter === c.value ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300'}`}>{c.label}</button>
+                        ))}
+                        <div className="flex-1"></div>
+                        <select value={sort} onChange={e => setSort(e.target.value)} className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600">
+                            <option value="new">최신순</option>
+                            <option value="like">공감순</option>
+                        </select>
+                    </div>
+
+                    <div className="space-y-3">
+                        {visiblePosts.length === 0 && (
+                            <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center">
+                                <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <Icon name="message-square" size={22} className="text-slate-400" />
+                                </div>
+                                <p className="text-slate-500 font-medium">아직 올라온 글이 없습니다.</p>
+                                <p className="text-xs text-slate-400 mt-1">첫 이야기를 남겨보세요.</p>
+                            </div>
+                        )}
+                        {visiblePosts.map(post => {
+                            const myTag = myTags[post.id];
+                            const mine = myTag && myTag === post.authorTag;
+                            const liked = myTag && (post.likedBy || []).includes(myTag);
+                            return (
+                                <button key={post.id} onClick={() => setSelectedId(post.id)} className="w-full text-left bg-white rounded-2xl border border-slate-100 shadow-sm p-5 hover:border-brand-300 transition-colors block">
+                                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100">{getBoardCategory(post.category).label}</span>
+                                        <span className="text-xs text-slate-400">{timeAgo(post.createdAt)}</span>
+                                        {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
+                                        {post.hidden && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">블라인드</span>}
+                                    </div>
+                                    <p className="text-sm text-slate-700 leading-relaxed line-clamp-3 whitespace-pre-wrap break-words">{post.content}</p>
+                                    <div className="flex items-center gap-4 mt-3 text-xs font-bold text-slate-400">
+                                        <span className={`flex items-center gap-1 ${liked ? 'text-brand-600' : ''}`}><Icon name="heart" size={13} /> {(post.likedBy || []).length}</span>
+                                        <span className="flex items-center gap-1"><Icon name="message-circle" size={13} /> {commentCountOf(post.id)}</span>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
         const DashboardView = ({ globalMetrics, chartData, teamStats, currentPeriod, user }) => {
             const KPICard = ({ metric }) => {
                 if(!metric) return null;
@@ -2735,6 +3109,7 @@
             const adminMenu = [
                 { id: 'dashboard', label: '대시보드', icon: 'layout-dashboard' },
                 { id: 'complaints', label: '고충 처리함', icon: 'inbox' },
+                { id: 'board', label: '대나무숲 게시판', icon: 'users' },
                 { id: 'pulse', label: '조직진단 현황', icon: 'bar-chart-2' },
                 { id: 'teams', label: '팀/조직 관리', icon: 'users' },
                 { id: 'analysis', label: '분석 및 개선', icon: 'lightbulb' },
@@ -2743,6 +3118,7 @@
                 { id: 'settings', label: '설정', icon: 'settings' }
             ];
             const empMenu = [
+                { id: 'board', label: '대나무숲 게시판', icon: 'users' },
                 { id: 'complaint', label: '고충 접수', icon: 'message-square' },
                 { id: 'complaint-lookup', label: '내 접수 조회', icon: 'search' },
                 { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' }
@@ -2831,9 +3207,11 @@
             }, []);
 
             useEffect(() => {
-                const employeeViews = ['complaint', 'complaint-lookup', 'pulse-survey'];
-                if(role === 'employee' && !employeeViews.includes(currentView)) setCurrentView('complaint');
-                else if(role === 'admin' && employeeViews.includes(currentView)) setCurrentView('dashboard');
+                // 게시판은 양쪽이 같은 화면을 본다(관리자는 숨김 처리 권한만 더 갖는다).
+                const sharedViews = ['board'];
+                const employeeOnlyViews = ['complaint', 'complaint-lookup', 'pulse-survey'];
+                if(role === 'employee' && !employeeOnlyViews.includes(currentView) && !sharedViews.includes(currentView)) setCurrentView('complaint');
+                else if(role === 'admin' && employeeOnlyViews.includes(currentView)) setCurrentView('dashboard');
             }, [role, currentView]);
 
             useEffect(() => {
@@ -2895,9 +3273,10 @@
                                 <div>
                                     <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
                                         <span className="hidden md:inline-block w-1 h-6 rounded-full bg-brand-600"></span>
-                                        {role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : currentView === 'complaint-lookup' ? '내 접수 조회' : '고충 접수') : 'HR 관리자 콘솔'}
+                                        {currentView === 'board' ? '대나무숲 게시판' : role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : currentView === 'complaint-lookup' ? '내 접수 조회' : '고충 접수') : 'HR 관리자 콘솔'}
                                     </h1>
-                                    {role === 'admin' && (
+                                    {/* 게시판은 기간과 무관한 화면이라 조회 기간 선택을 숨긴다. */}
+                                    {role === 'admin' && currentView !== 'board' && (
                                         <div className="mt-2 flex items-center gap-2 md:pl-[18px]">
                                             <p className="hidden md:block text-sm text-brand-600 font-bold">🕒 조회 기간:</p>
                                             <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="text-xs p-1 rounded-md border border-brand-200 bg-white text-brand-700 font-semibold">{availableYears.map(y => <option key={y} value={y}>{y}년</option>)}</select>
@@ -2915,8 +3294,10 @@
                             </div>
                         </header>
                         
+                        {currentView === 'board' && <BoardView user={user} role={role} />}
+
                         {role === 'employee' && currentView === 'complaint-lookup' && <ComplaintLookupView />}
-                        {role === 'employee' && currentView !== 'complaint-lookup' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
+                        {role === 'employee' && currentView !== 'complaint-lookup' && currentView !== 'board' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
                         
                         {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         {role === 'admin' && currentView === 'complaints' && <ComplaintManagementView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
