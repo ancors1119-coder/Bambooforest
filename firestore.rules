@@ -1,0 +1,92 @@
+rules_version = '2';
+
+// 대나무숲 Firestore 보안 규칙
+//
+// 이 파일이 없던 동안에는 `allow read, write: if true` 가 적용되어 있었다.
+// projectId 와 웹 API 키는 index.html 에 그대로 들어 있어 공개된 값이므로,
+// 그 규칙에서는 누구나 REST API 로 고충 접수 전문과 AI API 키를 읽을 수 있었다.
+//
+// 핵심 전제: 관리자 여부는 admins/{uid} 문서의 존재로 판정한다.
+// 앱의 관리자 로그인도 같은 조건을 보고 화면을 여닫지만, 실제 차단은 이 규칙이 한다.
+// 화면 코드를 고쳐도 데이터에는 닿지 못한다.
+//
+// 적용: Firebase 콘솔 → Firestore Database → 규칙 에 붙여넣고 게시.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // 관리자 명단. 콘솔에서 admins/{uid} 문서를 직접 만들어 등록한다.
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // 명단 자체는 클라이언트가 건드릴 수 없다. 읽기는 본인 문서만 허용해
+    // 로그인 직후 "내가 관리자인가" 를 확인할 수 있게 한다.
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, write: if false;
+    }
+
+    match /artifacts/{appId}/public/data/{collection}/{docId} {
+
+      // ── 고충 접수 ─────────────────────────────────────────────
+      // 목록 조회는 관리자만. 신고자는 접수번호 + PIN 으로 만든 해시가
+      // 곧 문서 ID 라서, ID 를 아는 본인만 한 건을 직접 읽을 수 있다.
+      // (해시가 SHA-256 이라 ID 를 찍어서 맞히는 것은 불가능하다)
+      function isComplaint() { return collection == 'complaint_cases'; }
+
+      // ── 조직 진단 응답 ────────────────────────────────────────
+      // 익명 응답이므로 개별 열람 경로가 없다. 관리자만 읽는다.
+      function isSurvey() { return collection == 'survey_responses'; }
+
+      // ── AI 설정 ───────────────────────────────────────────────
+      // API 키가 들어 있다. 관리자 외에는 읽을 수 없다.
+      function isSecret() { return collection == 'app_settings'; }
+
+      // ── 게시판 ────────────────────────────────────────────────
+      function isBoard() { return collection in ['board_posts', 'board_comments']; }
+
+      // ── 집계·운영 데이터 ──────────────────────────────────────
+      // 대시보드와 진단 화면이 쓰는 통계. 개인 식별 정보가 없어 열람은 열어두고
+      // 쓰기만 관리자로 제한한다.
+      function isStats() {
+        return collection in ['global_stats', 'team_stats', 'chart_stats', 'action_items'];
+      }
+
+      // ── 읽기 ──────────────────────────────────────────────────
+      allow get: if isAdmin()
+                 || isComplaint()      // 문서 ID(=해시)를 아는 본인만 도달 가능
+                 || isBoard()
+                 || isStats();
+
+      allow list: if isAdmin()
+                  || isBoard()
+                  || isStats();
+      // isComplaint / isSurvey / isSecret 은 list 에서 빠진다.
+      // 목록을 훑는 순간 전체가 노출되므로 관리자에게만 남긴다.
+
+      // ── 쓰기 ──────────────────────────────────────────────────
+      // 접수·응답·게시글 작성은 익명 사용자도 할 수 있어야 한다.
+      allow create: if isAdmin()
+                    || ((isComplaint() || isSurvey() || isBoard()) && signedIn());
+
+      // 수정: 신고자↔담당자 대화, 게시판 공감·신고 때문에 익명에게도 필요하다.
+      // 다만 고충 건에서 익명 사용자가 바꿀 수 있는 것은 대화뿐이다.
+      // (처리 상태·담당자·관리 메모·리스크 평가는 관리자만 손댈 수 있다)
+      allow update: if isAdmin()
+                    || (isComplaint() && signedIn()
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['thread', 'updatedAt']))
+                    || (isBoard() && signedIn());
+
+      // 삭제: 고충 접수와 진단 응답은 기록 보관 대상이라 관리자만 지운다.
+      allow delete: if isAdmin() || (isBoard() && signedIn());
+    }
+
+    // 위에 적히지 않은 경로는 전부 거부된다(규칙이 없으면 기본 거부).
+  }
+}
