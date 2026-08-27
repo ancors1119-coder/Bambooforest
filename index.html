@@ -272,28 +272,20 @@
         // 조합 수는 24 × 24 × 10000 = 약 576만. 게다가 문서 ID 는 접수번호와
         // PIN 을 함께 해시한 값이라, 실제로 겹치려면 둘 다 같아야 한다.
         // 그래도 덮어쓰기를 원천 차단하려고 저장 직전에 빈자리인지 확인한다.
-        const CASE_WORDS_A = [
-            '맑은', '푸른', '고요한', '잔잔한', '산뜻한', '포근한', '다정한', '든든한',
-            '씩씩한', '상냥한', '새로운', '따뜻한', '시원한', '눈부신', '향긋한', '부드러운',
-            '넉넉한', '정다운', '슬기로운', '자유로운', '평온한', '반가운', '소중한', '굳건한'
-        ];
-        const CASE_WORDS_B = [
-            '대나무', '소나무', '바람', '시냇물', '들판', '언덕', '새벽', '노을',
-            '별빛', '달빛', '이슬', '안개', '숲길', '오솔길', '물결', '구름',
-            '하늘', '햇살', '바다', '강물', '눈송이', '단풍', '봄비', '아침'
-        ];
+        // 접수번호 앞머리는 회사명으로 고정한다. 어디서 온 번호인지 바로 알아보고,
+        // 사내 문서나 메일에 적어도 자연스럽다.
+        const CASE_PREFIX = '엔코스';
 
-        const pickRandom = (arr) => {
-            const buf = new Uint32Array(1);
-            window.crypto.getRandomValues(buf);
-            return arr[buf[0] % arr.length];
-        };
+        // 뒤 숫자는 다섯 자리를 쓴다. 네 자리(1만 가지)면 접수가 100건쯤 쌓였을 때
+        // 같은 번호가 두 건 나올 확률이 절반에 가까워, 관리자 목록에서 헷갈린다.
+        // 한 자리를 늘리면 10만 가지가 되어 그 위험이 10분의 1로 준다.
+        const CASE_DIGITS = 5;
 
         const makeCaseNo = () => {
             const buf = new Uint32Array(1);
             window.crypto.getRandomValues(buf);
-            const digits = String(buf[0] % 10000).padStart(4, '0');
-            return `${pickRandom(CASE_WORDS_A)}${pickRandom(CASE_WORDS_B)}-${digits}`;
+            const max = 10 ** CASE_DIGITS;
+            return `${CASE_PREFIX}-${String(buf[0] % max).padStart(CASE_DIGITS, '0')}`;
         };
 
         // 하이픈을 빼거나 공백을 넣어 입력해도 찾을 수 있게 후보를 만든다.
@@ -303,7 +295,7 @@
             const trimmed = String(raw).trim();
             const compact = trimmed.replace(/\s+/g, '');
             const forms = [trimmed, compact];
-            const m = compact.match(/^([가-힣]+)-?(\d{4})$/);
+            const m = compact.match(/^([가-힣]+)-?(\d{4,6})$/);
             if (m) forms.push(`${m[1]}-${m[2]}`);
             return [...new Set(forms.filter(Boolean))];
         };
@@ -1395,7 +1387,7 @@
                                     value={caseNoInput}
                                     onChange={e => setCaseNoInput(e.target.value)}
                                     className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white font-semibold focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                                    placeholder="예: 푸른대나무-7421"
+                                    placeholder="예: 엔코스-73152"
                                     autoFocus
                                 />
                             </div>
@@ -1458,7 +1450,7 @@
 
             const steps = [
                 { n: '1', title: '접수하기', desc: '익명 또는 기명으로 작성합니다. 익명을 고르면 부서·이름·연락처를 아예 받지 않습니다.' },
-                { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 ‘푸른대나무-7421’ 같은 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
+                { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 ‘엔코스-73152’ 같은 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
                 { n: '3', title: '담당자 확인', desc: '접수 → 검토중 → 조사중 → 조치중 → 종결 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
                 { n: '4', title: '결과 확인', desc: "‘내 접수 조회’ 에서 접수번호와 PIN 을 넣으면 처리 상태와 담당자 답변을 볼 수 있습니다." }
             ];
