@@ -87,6 +87,24 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isBoard() && signedIn());
     }
 
+    // ── 대나무숲이 쓰지 않는 컬렉션 ───────────────────────────
+    // 이 Firebase 프로젝트는 다른 시스템과 함께 쓰이고 있다.
+    // 규칙에 적히지 않은 경로는 전부 거부되므로, 여기에 남기지 않으면
+    // hr_* 를 읽는 그 시스템이 이 규칙을 게시하는 순간 멈춘다.
+    //
+    // 그래서 일단 기존 동작(제한 없음)을 그대로 둔다. 이 규칙의 목적은
+    // 고충 접수를 잠그는 것이고, 그 과정에서 남의 시스템을 깨뜨리지 않는 것이
+    // 우선이기 때문이다.
+    //
+    // 다만 이 세 컬렉션은 여전히 외부에서 읽힌다. 특히
+    // hr_people_registry 는 이름상 개인정보가 들어 있을 가능성이 높다.
+    // 해당 시스템의 접속 방식이 확인되면 아래처럼 좁혀야 한다.
+    //   · 브라우저에서 접속       → `if request.auth != null` 로 제한
+    //   · 서버(Admin SDK)로 접속  → 규칙을 우회하므로 `if false` 로 잠가도 무방
+    match /hr_departments/{document=**}     { allow read, write: if true; }
+    match /hr_people_registry/{document=**} { allow read, write: if true; }
+    match /hr_positions/{document=**}       { allow read, write: if true; }
+
     // 위에 적히지 않은 경로는 전부 거부된다(규칙이 없으면 기본 거부).
   }
 }
