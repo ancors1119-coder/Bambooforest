@@ -258,6 +258,87 @@
 
         const getFormattedPeriod = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
 
+        // ── 익명 접수 조회 ────────────────────────────────────────────
+        // 신원 정보를 받지 않는 대신, 접수번호 + 신고자가 정한 PIN 으로 본인 건을 찾는다.
+        // PIN 원문은 저장하지 않고 SHA-256 해시만 남긴다.
+        const LOOKUP_SALT = 'bambooforest-lookup-v1';
+
+        const makeLookupHash = async (caseNo, pin) => {
+            if (!window.crypto?.subtle) {
+                // crypto.subtle 은 HTTPS(또는 localhost)에서만 동작한다.
+                throw new Error('보안 연결(HTTPS)에서만 조회 기능을 사용할 수 있습니다.');
+            }
+            const data = new TextEncoder().encode(`${LOOKUP_SALT}:${String(caseNo).trim().toUpperCase()}:${String(pin).trim()}`);
+            const buf = await window.crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+
+        const appendThreadMessage = (caseData, by, text) => {
+            const thread = Array.isArray(caseData?.thread) ? caseData.thread : [];
+            return [...thread, { by, text: String(text).trim(), at: new Date().toISOString() }];
+        };
+
+        // 신고자가 마지막으로 말을 걸었고 아직 답이 없으면 '답변 대기' 상태로 본다.
+        const isAwaitingReply = (caseData) => {
+            const thread = Array.isArray(caseData?.thread) ? caseData.thread : [];
+            return thread.length > 0 && thread[thread.length - 1].by === 'reporter';
+        };
+
+        // 신고자 화면과 관리자 화면이 같은 대화를 쓰므로 컴포넌트를 공유한다.
+        const CaseThread = ({ thread, viewer, onSend, emptyText }) => {
+            const [draft, setDraft] = useState("");
+            const [sending, setSending] = useState(false);
+            const messages = Array.isArray(thread) ? thread : [];
+
+            const submit = async (e) => {
+                e.preventDefault();
+                const text = draft.trim();
+                if (!text || sending) return;
+                setSending(true);
+                try {
+                    await onSend(text);
+                    setDraft("");
+                } catch (err) {
+                    alert("전송 실패: " + err.message);
+                } finally {
+                    setSending(false);
+                }
+            };
+
+            return (
+                <div>
+                    <div className="space-y-2 max-h-[280px] overflow-y-auto mb-3">
+                        {messages.length === 0 ? (
+                            <p className="text-sm text-slate-500">{emptyText}</p>
+                        ) : messages.map((m, idx) => {
+                            const mine = m.by === viewer;
+                            return (
+                                <div key={`${m.at}-${idx}`} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] rounded-xl px-3.5 py-2.5 border ${mine ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-700 border-slate-200'}`}>
+                                        <p className={`text-[11px] font-bold mb-1 ${mine ? 'text-white/80' : 'text-slate-400'}`}>
+                                            {m.by === 'admin' ? '담당자' : '신고자'} · {formatDateTime(m.at)}
+                                        </p>
+                                        <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{m.text}</p>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <form onSubmit={submit} className="flex gap-2">
+                        <input
+                            value={draft}
+                            onChange={e => setDraft(e.target.value)}
+                            placeholder={viewer === 'admin' ? '신고자에게 보낼 메시지…' : '담당자에게 보낼 메시지…'}
+                            className="flex-1 border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                        />
+                        <button type="submit" disabled={!draft.trim() || sending} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            {sending ? '전송 중' : '보내기'}
+                        </button>
+                    </form>
+                </div>
+            );
+        };
+
         const PULSE_FIELDS = [
             { id: 'workload', label: '업무부하', desc: '업무량과 마감이 감당 가능한 수준입니다.', category: 'env' },
             { id: 'clarity', label: '역할명확성', desc: '내 역할과 목표, 업무 우선순위가 명확합니다.', category: 'env' },
@@ -567,6 +648,11 @@
         const formatDateTime = (value) => {
             if (!value) return "-";
             if (value.seconds) return new Date(value.seconds * 1000).toLocaleString();
+            // 처리 이력·대화는 ISO 문자열로 저장되므로 사람이 읽는 형식으로 바꿔준다.
+            if (typeof value === "string") {
+                const parsed = new Date(value);
+                if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+            }
             return String(value);
         };
 
@@ -609,6 +695,7 @@
         const SurveyView = ({ teamStats, currentPeriod, mode }) => {
             const activeTab = mode === "pulse-survey" ? "pulse" : "complaint";
             const [surveyData, setSurveyData] = useState({ ...DEFAULT_SURVEY_DATA });
+            const [copied, setCopied] = useState(false);
             const [complaintData, setComplaintData] = useState({
                 reporterMode: "anonymous",
                 reporterName: "",
@@ -623,6 +710,7 @@
                 desiredAction: "",
                 protectionRequest: "no",
                 allowContact: "no",
+                lookupPin: "",
                 privacyConsent: false
             });
             const [submitted, setSubmitted] = useState(null);
@@ -699,6 +787,7 @@
                     desiredAction: "",
                     protectionRequest: "no",
                     allowContact: "no",
+                    lookupPin: "",
                     privacyConsent: false
                 });
             };
@@ -709,12 +798,25 @@
                 if (!complaintData.subject.trim()) return alert("제목을 입력해주세요.");
                 if (!complaintData.details.trim()) return alert("상세 내용을 입력해주세요.");
                 if (complaintData.reporterMode === "named" && !complaintData.reporterName.trim()) return alert("기명 접수 시 성명을 입력해주세요.");
+                if (!/^[0-9]{4,8}$/.test(complaintData.lookupPin)) return alert("조회 PIN을 숫자 4~8자리로 입력해주세요.");
                 if (!complaintData.privacyConsent) return alert("개인정보 수집·이용 안내 확인이 필요합니다.");
 
                 const caseNo = `GC-${currentPeriod.replace("-", "")}-${Date.now().toString().slice(-6)}`;
                 const risk = assessComplaintRisk(complaintData);
+
+                // PIN 원문은 절대 저장하지 않는다. 해시만 남기고 폼 데이터에서 걷어낸다.
+                const { lookupPin, ...complaintFields } = complaintData;
+                let lookupHash;
+                try {
+                    lookupHash = await makeLookupHash(caseNo, lookupPin);
+                } catch (err) {
+                    return alert(err.message);
+                }
+
                 const payload = {
-                    ...complaintData,
+                    ...complaintFields,
+                    lookupHash,
+                    thread: [],
                     caseNo,
                     period: currentPeriod,
                     teamNameSnapshot: getTeamName(teamStats, complaintData.teamId),
@@ -736,7 +838,7 @@
                         window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases'),
                         payload
                     );
-                    setSubmitted({ type: "complaint", caseNo, riskLevel: risk.riskLevel });
+                    setSubmitted({ type: "complaint", caseNo, pin: lookupPin, riskLevel: risk.riskLevel });
                     resetComplaintForm();
                 } catch(e) {
                     console.error(e);
@@ -745,12 +847,50 @@
             };
 
             if(submitted) return (
-                <div className="flex flex-col items-center justify-center h-full p-8 text-center animate-fade-in">
+                <div className="flex flex-col items-center justify-center h-full p-4 md:p-8 text-center animate-fade-in">
                     <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4"><Icon name="check" size={32} className="text-green-600" /></div>
                     <h2 className="text-2xl font-bold text-slate-800 mb-2">{submitted.type === "complaint" ? "접수 완료" : "제출 완료"}</h2>
-                    <p className="text-slate-500 mb-2">{submitted.type === "complaint" ? "고충·의견이 관리자 처리함에 접수되었습니다." : "소중한 의견이 안전하게 저장되었습니다."}</p>
-                    {submitted.type === "complaint" && <p className="text-sm font-bold text-slate-700 mb-6">접수번호: {submitted.caseNo}</p>}
-                    <button onClick={() => { setSubmitted(null); setSurveyData({ ...DEFAULT_SURVEY_DATA }); setKeywordInput(""); setTouchedFields({}); setPulseComments({}); }} className="text-brand-600 font-bold hover:underline">추가 작성하기</button>
+                    <p className="text-slate-500 mb-6">{submitted.type === "complaint" ? "고충·의견이 관리자 처리함에 접수되었습니다." : "소중한 의견이 안전하게 저장되었습니다."}</p>
+
+                    {submitted.type === "complaint" && (
+                        <div className="w-full max-w-md text-left">
+                            {/* 이 화면을 벗어나면 접수번호를 다시 볼 수 없으므로 최대한 눈에 띄게 안내한다. */}
+                            <div className="bg-white border-2 border-brand-300 rounded-2xl p-5 shadow-card">
+                                <p className="text-xs font-bold text-brand-700 mb-3">아래 정보를 반드시 저장해주세요</p>
+                                <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-2">
+                                    <div className="min-w-0">
+                                        <p className="text-[11px] text-slate-500 font-bold">접수번호</p>
+                                        <p className="font-mono text-base font-bold text-slate-800 truncate">{submitted.caseNo}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const text = `접수번호: ${submitted.caseNo} / PIN: ${submitted.pin}`;
+                                            const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+                                            if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(() => alert(text));
+                                            else alert(text);
+                                        }}
+                                        className="flex-shrink-0 flex items-center gap-1.5 border border-brand-200 bg-brand-50 text-brand-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-brand-600 hover:border-brand-600 hover:text-white transition-colors"
+                                    >
+                                        <Icon name={copied ? "check" : "copy"} size={14} /> {copied ? "복사됨" : "복사"}
+                                    </button>
+                                </div>
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                                    <p className="text-[11px] text-slate-500 font-bold">조회 PIN</p>
+                                    <p className="font-mono text-base font-bold text-slate-800 tracking-[0.3em]">{submitted.pin}</p>
+                                </div>
+                                <p className="text-xs text-red-700 font-bold mt-3 flex items-start gap-1.5">
+                                    <Icon name="alert-circle" size={14} />
+                                    <span>이 화면을 벗어나면 다시 볼 수 없습니다. 분실 시 조회와 답변 확인이 불가능합니다.</span>
+                                </p>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3 text-center">
+                                왼쪽 메뉴의 <span className="font-bold text-slate-700">‘내 접수 조회’</span> 에서 처리 상태와 담당자 답변을 확인하실 수 있습니다.
+                            </p>
+                        </div>
+                    )}
+
+                    <button onClick={() => { setSubmitted(null); setSurveyData({ ...DEFAULT_SURVEY_DATA }); setKeywordInput(""); setTouchedFields({}); setPulseComments({}); }} className="text-brand-600 font-bold hover:underline mt-6">추가 작성하기</button>
                 </div>
             );
 
@@ -851,6 +991,27 @@
                                             <span className="block text-xs text-slate-500 mt-1">기명 접수 또는 연락처 기재 시에만 후속 확인이 가능합니다.</span>
                                         </span>
                                     </label>
+                                </div>
+
+                                {/* 익명 접수는 신원 정보를 받지 않으므로, 이 PIN 이 본인 확인의 유일한 수단이 된다. */}
+                                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">조회 PIN <span className="text-brand-600">*</span></label>
+                                    <p className="text-xs text-slate-500 mb-3">
+                                        접수 후 <span className="font-bold text-slate-700">접수번호 + PIN</span> 으로 처리 상태와 담당자 답변을 확인할 수 있습니다.
+                                        {complaintData.reporterMode === "anonymous" && " 익명 접수는 연락처를 받지 않으므로, 이 PIN 이 답변을 받을 수 있는 유일한 방법입니다."}
+                                    </p>
+                                    <input
+                                        type="password"
+                                        inputMode="numeric"
+                                        autoComplete="new-password"
+                                        maxLength={8}
+                                        value={complaintData.lookupPin}
+                                        onChange={e => setComplaintData({...complaintData, lookupPin: e.target.value.replace(/[^0-9]/g, "")})}
+                                        className="w-full md:w-52 px-4 py-3 border border-slate-200 rounded-xl bg-white tracking-[0.4em] text-center focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                        placeholder="숫자 4~8자리"
+                                        required
+                                    />
+                                    <p className="text-xs text-slate-400 mt-2">PIN 은 암호화되어 저장되며, 관리자도 볼 수 없습니다. 분실 시 재발급이 불가능합니다.</p>
                                 </div>
 
                                 <label className="flex items-start gap-3 p-4 rounded-xl border border-brand-100 bg-brand-50 cursor-pointer">
@@ -981,6 +1142,170 @@
                                 </form>
                             </div>
                         )}
+                    </div>
+                </div>
+            );
+        };
+
+        // 익명 신고자가 접수번호 + PIN 으로 본인 건을 열어보는 화면.
+        // 내부 판단 자료(관리 메모·리스크 점수)는 노출하지 않고, 상태·결과·대화만 보여준다.
+        const ComplaintLookupView = () => {
+            const [caseNoInput, setCaseNoInput] = useState("");
+            const [pinInput, setPinInput] = useState("");
+            const [checking, setChecking] = useState(false);
+            const [error, setError] = useState("");
+            const [foundId, setFoundId] = useState(null);
+            const [caseData, setCaseData] = useState(null);
+
+            // 조회에 성공하면 해당 문서를 구독해, 담당자 답변이 실시간으로 들어온다.
+            useEffect(() => {
+                if (!foundId || !window.db) return;
+                const ref = window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', foundId);
+                return window.firestore.onSnapshot(ref, (snap) => {
+                    if (snap.exists()) setCaseData({ id: snap.id, ...snap.data() });
+                });
+            }, [foundId]);
+
+            const handleLookup = async (e) => {
+                e.preventDefault();
+                setError("");
+                if (!caseNoInput.trim()) return setError("접수번호를 입력해주세요.");
+                if (!/^[0-9]{4,8}$/.test(pinInput)) return setError("PIN 을 숫자 4~8자리로 입력해주세요.");
+
+                setChecking(true);
+                try {
+                    const hash = await makeLookupHash(caseNoInput, pinInput);
+                    const q = window.firestore.query(
+                        window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases'),
+                        window.firestore.where("lookupHash", "==", hash)
+                    );
+                    const snap = await window.firestore.getDocs(q);
+                    if (!snap.docs || snap.docs.length === 0) {
+                        // 어느 쪽이 틀렸는지 알려주지 않는다 (접수번호 대입 공격 방지).
+                        setError("일치하는 접수 건이 없습니다. 접수번호와 PIN 을 다시 확인해주세요.");
+                        setFoundId(null);
+                        setCaseData(null);
+                    } else {
+                        const doc = snap.docs[0];
+                        setCaseData({ id: doc.id, ...doc.data() });
+                        setFoundId(doc.id);
+                    }
+                } catch (err) {
+                    setError(err.message || "조회 중 오류가 발생했습니다.");
+                } finally {
+                    setChecking(false);
+                }
+            };
+
+            const sendMessage = async (text) => {
+                if (!caseData) return;
+                await window.firestore.updateDoc(
+                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', caseData.id),
+                    { thread: appendThreadMessage(caseData, 'reporter', text), updatedAt: window.firestore.serverTimestamp() }
+                );
+            };
+
+            const reset = () => { setFoundId(null); setCaseData(null); setCaseNoInput(""); setPinInput(""); setError(""); };
+
+            if (caseData) {
+                const statusTone = caseData.status === "종결" ? "bg-green-100 text-green-700 border-green-200"
+                    : caseData.status === "보류" ? "bg-slate-100 text-slate-700 border-slate-200"
+                    : "bg-amber-100 text-amber-800 border-amber-200";
+                return (
+                    <div className="max-w-3xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
+                        <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-4 md:p-8">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                <div className="min-w-0">
+                                    <p className="font-mono text-xs text-slate-500">{caseData.caseNo}</p>
+                                    <h1 className="text-xl md:text-2xl font-bold text-slate-800 mt-1 break-words">{caseData.subject}</h1>
+                                    <p className="text-sm text-slate-500 mt-1">
+                                        {getCategoryLabel(caseData.category)} · 긴급도 {getUrgencyLabel(caseData.urgency)} · 접수 {formatDateTime(caseData.createdAt)}
+                                    </p>
+                                </div>
+                                <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${statusTone}`}>{caseData.status || "접수"}</span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">담당자</p>
+                                    <p className="text-sm font-bold text-slate-800">{caseData.handler || "배정 전"}</p>
+                                </div>
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">최근 업데이트</p>
+                                    <p className="text-sm font-bold text-slate-800">{formatDateTime(caseData.updatedAt) }</p>
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <h3 className="font-bold text-slate-800 mb-2">처리 결과</h3>
+                                {caseData.outcome ? (
+                                    <div className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed bg-brand-50 border border-brand-100 rounded-xl p-4">{caseData.outcome}</div>
+                                ) : (
+                                    <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">아직 처리 결과가 등록되지 않았습니다. 확인 후 이곳에 안내드립니다.</p>
+                                )}
+                            </div>
+
+                            <div className="border-t border-slate-200 pt-5">
+                                <h3 className="font-bold text-slate-800 mb-1">담당자와의 대화</h3>
+                                <p className="text-xs text-slate-500 mb-3">익명이 유지된 채로 담당자와 이야기할 수 있습니다. 추가로 확인이 필요한 내용이 있으면 여기로 질문이 옵니다.</p>
+                                <CaseThread
+                                    thread={caseData.thread}
+                                    viewer="reporter"
+                                    onSend={sendMessage}
+                                    emptyText="아직 오간 메시지가 없습니다. 궁금한 점을 남겨주세요."
+                                />
+                            </div>
+                        </div>
+                        <button onClick={reset} className="text-sm text-slate-500 hover:text-brand-600 font-bold">← 다른 접수 건 조회하기</button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-lg mx-auto animate-fade-in my-4 md:my-8">
+                    <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-6 md:p-8">
+                        <div className="w-12 h-12 bg-brand-50 border border-brand-100 rounded-full flex items-center justify-center mb-4">
+                            <Icon name="search" size={22} className="text-brand-600" />
+                        </div>
+                        <h1 className="text-xl md:text-2xl font-bold text-slate-800">내 접수 조회</h1>
+                        <p className="text-sm text-slate-500 mt-2 mb-6 leading-relaxed">
+                            접수 시 받으신 <span className="font-bold text-slate-700">접수번호</span> 와 직접 정하신 <span className="font-bold text-slate-700">PIN</span> 을 입력하시면
+                            처리 상태와 담당자 답변을 확인하실 수 있습니다. 익명 접수도 신원 확인 없이 그대로 조회됩니다.
+                        </p>
+
+                        <form onSubmit={handleLookup} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">접수번호</label>
+                                <input
+                                    value={caseNoInput}
+                                    onChange={e => setCaseNoInput(e.target.value)}
+                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white font-mono focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                    placeholder="예: GC-202602-123456"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">조회 PIN</label>
+                                <input
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={8}
+                                    value={pinInput}
+                                    onChange={e => setPinInput(e.target.value.replace(/[^0-9]/g, ""))}
+                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-center tracking-[0.4em] focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                    placeholder="숫자 4~8자리"
+                                />
+                            </div>
+                            {error && <p className="text-sm text-red-700 font-medium bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+                            <button type="submit" disabled={checking} className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 shadow-brand transition-colors disabled:opacity-50">
+                                {checking ? "조회 중…" : "조회하기"}
+                            </button>
+                        </form>
+
+                        <p className="text-xs text-slate-400 mt-5 leading-relaxed">
+                            PIN 은 암호화되어 저장되므로 관리자도 확인하거나 재발급할 수 없습니다.
+                            분실하신 경우 번거로우시더라도 새로 접수해주세요.
+                        </p>
                     </div>
                 </div>
             );
@@ -1807,6 +2132,17 @@
                 return () => unsubscribe();
             }, [currentPeriod, teamStats]);
 
+            // 상세 모달을 열어둔 사이에 신고자가 메시지를 보내면 바로 보이도록,
+            // 실시간 목록에서 해당 건의 대화만 따라간다. (입력 중인 detailDraft 는 건드리지 않는다)
+            useEffect(() => {
+                if (!selectedCase) return;
+                const live = cases.find(c => c.id === selectedCase.id);
+                if (!live) return;
+                const liveLen = (live.thread || []).length;
+                const shownLen = (selectedCase.thread || []).length;
+                if (liveLen !== shownLen) setSelectedCase(prev => ({ ...prev, thread: live.thread || [] }));
+            }, [cases, selectedCase]);
+
             const openCase = (item) => {
                 setSelectedCase(item);
                 setDetailDraft({
@@ -1879,6 +2215,16 @@
                 );
                 setSelectedCase({ ...selectedCase, ...patch });
                 alert("저장되었습니다.");
+            };
+
+            const sendReply = async (text) => {
+                if (!selectedCase) return;
+                const thread = appendThreadMessage(selectedCase, 'admin', text);
+                await window.firestore.updateDoc(
+                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', selectedCase.id),
+                    { thread, updatedAt: window.firestore.serverTimestamp() }
+                );
+                setSelectedCase({ ...selectedCase, thread });
             };
 
             const quickStatus = async (item, nextStatus) => {
@@ -1973,7 +2319,13 @@
                                             <tr key={item.id} className="hover:bg-slate-50">
                                                 <td className="p-3 font-mono text-xs text-slate-500 whitespace-nowrap">{item.caseNo || item.id.slice(0, 8)}</td>
                                                 <td className="p-3 min-w-[220px]">
-                                                    <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-brand-700 text-left">{item.subject || "-"}</button>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-brand-700 text-left">{item.subject || "-"}</button>
+                                                        {/* 신고자가 마지막으로 메시지를 남긴 건은 놓치지 않도록 표시한다. */}
+                                                        {isAwaitingReply(item) && (
+                                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white whitespace-nowrap">답변 대기</span>
+                                                        )}
+                                                    </div>
                                                     <p className="text-xs text-slate-400 mt-1 line-clamp-1">{item.details}</p>
                                                 </td>
                                                 <td className="p-3 whitespace-nowrap">{item.teamName}</td>
@@ -2079,6 +2431,26 @@
                                             <textarea value={detailDraft.outcome} onChange={e => setDetailDraft({...detailDraft, outcome: e.target.value})} rows="5" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white resize-none" placeholder="조치 내용, 통보 여부, 후속관리 기준" />
                                         </div>
                                         <button onClick={saveCase} className="w-full bg-brand-600 text-white py-3 rounded-lg font-bold hover:bg-brand-700">저장</button>
+
+                                        <div className="border-t border-slate-200 pt-4">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <h4 className="font-bold text-slate-800">신고자와의 대화</h4>
+                                                {isAwaitingReply(selectedCase) && (
+                                                    <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">답변 대기</span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 mb-3">
+                                                {selectedCase.reporterMode === "named"
+                                                    ? "접수번호와 PIN 으로 접속한 신고자에게 전달됩니다."
+                                                    : "익명 신고자에게 신원 노출 없이 전달됩니다. 조사에 필요한 내용을 여기서 확인하세요."}
+                                            </p>
+                                            <CaseThread
+                                                thread={selectedCase.thread}
+                                                viewer="admin"
+                                                onSend={sendReply}
+                                                emptyText="아직 오간 메시지가 없습니다."
+                                            />
+                                        </div>
 
                                         <div className="border-t border-slate-200 pt-4">
                                             <h4 className="font-bold text-slate-800 mb-3">처리 이력</h4>
@@ -2372,6 +2744,7 @@
             ];
             const empMenu = [
                 { id: 'complaint', label: '고충 접수', icon: 'message-square' },
+                { id: 'complaint-lookup', label: '내 접수 조회', icon: 'search' },
                 { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' }
             ];
             const menu = role === 'admin' ? adminMenu : empMenu;
@@ -2458,8 +2831,9 @@
             }, []);
 
             useEffect(() => {
-                if(role === 'employee' && (currentView !== 'complaint' && currentView !== 'pulse-survey')) setCurrentView('complaint');
-                else if(role === 'admin' && (currentView === 'complaint' || currentView === 'pulse-survey')) setCurrentView('dashboard');
+                const employeeViews = ['complaint', 'complaint-lookup', 'pulse-survey'];
+                if(role === 'employee' && !employeeViews.includes(currentView)) setCurrentView('complaint');
+                else if(role === 'admin' && employeeViews.includes(currentView)) setCurrentView('dashboard');
             }, [role, currentView]);
 
             useEffect(() => {
@@ -2521,7 +2895,7 @@
                                 <div>
                                     <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
                                         <span className="hidden md:inline-block w-1 h-6 rounded-full bg-brand-600"></span>
-                                        {role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : '고충 접수') : 'HR 관리자 콘솔'}
+                                        {role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : currentView === 'complaint-lookup' ? '내 접수 조회' : '고충 접수') : 'HR 관리자 콘솔'}
                                     </h1>
                                     {role === 'admin' && (
                                         <div className="mt-2 flex items-center gap-2 md:pl-[18px]">
@@ -2541,7 +2915,8 @@
                             </div>
                         </header>
                         
-                        {role === 'employee' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
+                        {role === 'employee' && currentView === 'complaint-lookup' && <ComplaintLookupView />}
+                        {role === 'employee' && currentView !== 'complaint-lookup' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
                         
                         {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         {role === 'admin' && currentView === 'complaints' && <ComplaintManagementView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
