@@ -76,7 +76,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDm0qnGzq8P3zBBqW_4qjlMd9aq-QKrDyU",
@@ -93,7 +93,7 @@
             window.db = getFirestore(app);
             window.auth = getAuth(app);
             window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where };
-            window.firebaseAuth = { signInAnonymously, onAuthStateChanged };
+            window.firebaseAuth = { signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut };
         } catch (e) { console.error("Firebase Init Error:", e); }
     </script>
 
@@ -528,25 +528,51 @@
             }
         };
 
+        // 관리자 인증은 Firebase Auth 이메일 로그인으로 처리한다.
+        // 예전에는 비밀번호 해시를 브라우저에서 상수와 비교했는데, 그 방식은
+        // 콘솔에서 우회할 수 있을 뿐 아니라 Firestore 규칙이 관리자를 구분할
+        // 근거가 없어서 고충 내역을 잠글 수가 없었다.
+        // 이제 관리자 여부는 admins/{uid} 문서의 존재로 판정하고, 같은 조건을
+        // 보안 규칙에서도 검사한다.
         const AdminLoginModal = ({ onClose, onSuccess }) => {
+            const [email, setEmail] = useState("");
             const [password, setPassword] = useState("");
-            const [error, setError] = useState(false);
-            const TARGET_HASH = 1486289; 
-            const simpleHash = (str) => {
-                let hash = 0;
-                if (str.length === 0) return hash;
-                for (let i = 0; i < str.length; i++) {
-                    const char = str.charCodeAt(i);
-                    hash = ((hash << 5) - hash) + char;
-                    hash = hash & hash; 
-                }
-                return hash;
-            };
-            const handleSubmit = (e) => {
+            const [error, setError] = useState("");
+            const [busy, setBusy] = useState(false);
+
+            const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (simpleHash(password) === TARGET_HASH) { onSuccess(); onClose(); } 
-                else { setError(true); setPassword(""); }
+                if (busy) return;
+                setError("");
+                setBusy(true);
+                try {
+                    const cred = await window.firebaseAuth.signInWithEmailAndPassword(window.auth, email.trim(), password);
+                    const adminDoc = await window.firestore.getDoc(
+                        window.firestore.doc(window.db, 'admins', cred.user.uid)
+                    );
+                    if (!adminDoc.exists()) {
+                        // 로그인은 됐지만 관리자 명단에 없는 계정. 익명으로 되돌린다.
+                        await window.firebaseAuth.signOut(window.auth);
+                        await window.firebaseAuth.signInAnonymously(window.auth);
+                        setError("관리자 권한이 없는 계정입니다.");
+                        return;
+                    }
+                    onSuccess();
+                    onClose();
+                } catch (err) {
+                    const code = err?.code || "";
+                    setError(
+                        code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")
+                            ? "이메일 또는 비밀번호가 올바르지 않습니다."
+                            : code.includes("too-many-requests")
+                                ? "시도가 너무 잦습니다. 잠시 후 다시 시도해주세요."
+                                : "로그인에 실패했습니다. " + (err?.message || "")
+                    );
+                } finally {
+                    setBusy(false);
+                }
             };
+
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 fade-in backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-8 border border-slate-200">
@@ -555,13 +581,34 @@
                                 <Icon name="lock" size={24} className="text-brand-600" />
                             </div>
                             <h2 className="text-xl font-bold text-slate-800">관리자 인증</h2>
+                            <p className="text-xs text-slate-500 mt-1.5">HR 담당자 계정으로 로그인해주세요.</p>
                         </div>
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(false); }} className="w-full px-4 py-3 border border-slate-300 rounded-lg text-center tracking-widest text-lg focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" placeholder="비밀번호 입력" autoFocus />
-                            {error && <p className="text-red-600 text-xs text-center font-medium">비밀번호가 일치하지 않습니다.</p>}
-                            <div className="flex gap-2">
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => { setEmail(e.target.value); setError(""); }}
+                                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                placeholder="이메일"
+                                autoComplete="username"
+                                autoFocus
+                                required
+                            />
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                placeholder="비밀번호"
+                                autoComplete="current-password"
+                                required
+                            />
+                            {error && <p className="text-red-700 text-xs text-center font-medium bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+                            <div className="flex gap-2 pt-1">
                                 <button type="button" onClick={onClose} className="flex-1 py-3 font-bold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">취소</button>
-                                <button type="submit" className="flex-1 py-3 font-bold text-white bg-brand-600 rounded-lg hover:bg-brand-700 shadow-brand transition-colors">확인</button>
+                                <button type="submit" disabled={busy} className="flex-1 py-3 font-bold text-white bg-brand-600 rounded-lg hover:bg-brand-700 shadow-brand transition-colors disabled:opacity-50">
+                                    {busy ? "확인 중…" : "로그인"}
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -814,8 +861,10 @@
                 }
 
                 const payload = {
+                    // 문서 ID 자체를 lookupHash 로 쓴다. 그래야 보안 규칙에서
+                    // "ID 를 아는 사람만 get 허용, 목록 조회(list)는 관리자만" 을 표현할 수 있다.
+                    // 필드로 갖고 있으면 결국 조회를 위해 목록 권한을 열어줘야 한다.
                     ...complaintFields,
-                    lookupHash,
                     thread: [],
                     caseNo,
                     period: currentPeriod,
@@ -834,8 +883,8 @@
                     updatedAt: window.firestore.serverTimestamp()
                 };
                 try {
-                    await window.firestore.addDoc(
-                        window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases'),
+                    await window.firestore.setDoc(
+                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', lookupHash),
                         payload
                     );
                     setSubmitted({ type: "complaint", caseNo, pin: lookupPin, riskLevel: risk.riskLevel });
@@ -1174,21 +1223,20 @@
 
                 setChecking(true);
                 try {
+                    // 해시가 곧 문서 ID 다. 목록을 훑지 않고 한 건만 직접 읽으므로,
+                    // 보안 규칙에서 이 컬렉션의 list 권한을 관리자에게만 줄 수 있다.
                     const hash = await makeLookupHash(caseNoInput, pinInput);
-                    const q = window.firestore.query(
-                        window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases'),
-                        window.firestore.where("lookupHash", "==", hash)
+                    const snap = await window.firestore.getDoc(
+                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', hash)
                     );
-                    const snap = await window.firestore.getDocs(q);
-                    if (!snap.docs || snap.docs.length === 0) {
+                    if (!snap.exists()) {
                         // 어느 쪽이 틀렸는지 알려주지 않는다 (접수번호 대입 공격 방지).
                         setError("일치하는 접수 건이 없습니다. 접수번호와 PIN 을 다시 확인해주세요.");
                         setFoundId(null);
                         setCaseData(null);
                     } else {
-                        const doc = snap.docs[0];
-                        setCaseData({ id: doc.id, ...doc.data() });
-                        setFoundId(doc.id);
+                        setCaseData({ id: hash, ...snap.data() });
+                        setFoundId(hash);
                     }
                 } catch (err) {
                     setError(err.message || "조회 중 오류가 발생했습니다.");
@@ -3198,9 +3246,23 @@
             useEffect(() => {
                 const initAuth = async () => {
                     if (!window.firebaseAuth) return;
-                    window.firebaseAuth.onAuthStateChanged(window.auth, (u) => {
-                        if (u) { setUser(u); } 
-                        else { window.firebaseAuth.signInAnonymously(window.auth).catch(console.error); }
+                    window.firebaseAuth.onAuthStateChanged(window.auth, async (u) => {
+                        if (!u) {
+                            window.firebaseAuth.signInAnonymously(window.auth).catch(console.error);
+                            return;
+                        }
+                        setUser(u);
+                        // 역할은 화면 상태가 아니라 실제 로그인 세션에서 나온다.
+                        // 익명 세션이면 무조건 구성원이고, 관리자는 admins/{uid} 가 있어야 한다.
+                        // (같은 조건을 Firestore 보안 규칙에서도 검사하므로 화면만 바꿔서는 데이터에 닿지 못한다)
+                        if (u.isAnonymous) { setRole('employee'); return; }
+                        try {
+                            const adminDoc = await window.firestore.getDoc(window.firestore.doc(window.db, 'admins', u.uid));
+                            setRole(adminDoc.exists() ? 'admin' : 'employee');
+                        } catch (e) {
+                            console.error(e);
+                            setRole('employee');
+                        }
                     });
                 };
                 initAuth();
@@ -3235,21 +3297,36 @@
                     if (s.exists()) setChartData(s.data());
                     else window.firestore.setDoc(chartRef, { trend: [] }); 
                 });
-                const aiConfigRef = window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'app_settings', 'ai_config');
-                const unsubAiConfig = window.firestore.onSnapshot(aiConfigRef, (s) => {
-                    if (!s.exists()) return;
-                    const data = s.data();
-                    setAiConfig({
-                        keyStorageMode: data?.keyStorageMode || 'cloud',
-                        apiKey: data?.apiKey || '',
-                        models: Array.isArray(data?.models) ? data.models : [],
-                        selectedModel: data?.selectedModel || ''
+                // AI 설정에는 API 키가 들어 있고 관리자 화면에서만 쓰인다.
+                // 구성원 세션까지 구독하면 보안 규칙에서 이 문서를 관리자 전용으로 잠글 수 없다.
+                let unsubAiConfig = () => {};
+                if (role === 'admin') {
+                    const aiConfigRef = window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'app_settings', 'ai_config');
+                    unsubAiConfig = window.firestore.onSnapshot(aiConfigRef, (s) => {
+                        if (!s.exists()) return;
+                        const data = s.data();
+                        setAiConfig({
+                            keyStorageMode: data?.keyStorageMode || 'cloud',
+                            apiKey: data?.apiKey || '',
+                            models: Array.isArray(data?.models) ? data.models : [],
+                            selectedModel: data?.selectedModel || ''
+                        });
                     });
-                });
+                }
                 return () => { unsubMetrics(); unsubTeams(); unsubChart(); unsubAiConfig(); };
-            }, [currentPeriod, user]);
+            }, [currentPeriod, user, role]);
             
             const handleAdminSuccess = () => { setRole('admin'); };
+
+            // 화면만 구성원으로 바꾸는 게 아니라 관리자 세션을 실제로 끊고 익명으로 되돌린다.
+            const leaveAdmin = async () => {
+                if (role !== 'admin') return;
+                try {
+                    await window.firebaseAuth.signOut(window.auth);
+                    await window.firebaseAuth.signInAnonymously(window.auth);
+                } catch (e) { console.error(e); }
+                setRole('employee');
+            };
 
             if (!user) return <Loading />;
 
@@ -3289,7 +3366,7 @@
                             <div className="flex items-center gap-4">
                                 <div className="bg-white border border-slate-200 rounded-lg p-1 flex shadow-sm">
                                     <button onClick={() => setShowAdminLogin(true)} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'admin' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-brand-50 hover:text-brand-600'}`}>관리자</button>
-                                    <button onClick={() => setRole('employee')} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'employee' ? 'bg-brand-600 text-white' : 'text-slate-500 hover:bg-brand-50 hover:text-brand-600'}`}>구성원</button>
+                                    <button onClick={leaveAdmin} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'employee' ? 'bg-brand-600 text-white' : 'text-slate-500 hover:bg-brand-50 hover:text-brand-600'}`}>구성원</button>
                                 </div>
                             </div>
                         </header>
