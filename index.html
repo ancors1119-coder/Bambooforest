@@ -75,7 +75,7 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -92,7 +92,7 @@
             const app = initializeApp(firebaseConfig);
             window.db = getFirestore(app);
             window.auth = getAuth(app);
-            window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where };
+            window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit };
             window.firebaseAuth = { signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut };
         } catch (e) { console.error("Firebase Init Error:", e); }
     </script>
@@ -1376,6 +1376,7 @@
         ];
         const BOARD_SALT = 'bambooforest-board-v1';
         const BOARD_BLIND_THRESHOLD = 3;   // 신고 3건이면 자동 블라인드 후 관리자 검토
+        const BOARD_PAGE_SIZE = 10;        // 한 번에 불러오는 글 수
 
         const getBoardCategory = (value) => BOARD_CATEGORIES.find(c => c.value === value) || BOARD_CATEGORIES[0];
 
@@ -1413,29 +1414,43 @@
             const [draft, setDraft] = useState({ category: 'free', content: '' });
             const [sending, setSending] = useState(false);
             const [sort, setSort] = useState('new');
+            const [pageSize, setPageSize] = useState(BOARD_PAGE_SIZE);
+            const [reachedEnd, setReachedEnd] = useState(false);
             const [filter, setFilter] = useState('all');
             const [commentDraft, setCommentDraft] = useState("");
 
             const col = (name) => window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', name);
             const ref = (name, id) => window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', name, id);
 
+            // 전부 내려받으면 글이 쌓일수록 그대로 느려진다.
+            // 정렬·필터·개수 제한을 모두 서버에 맡기고, '더 보기' 로 한도만 늘린다.
+            useEffect(() => { setPageSize(BOARD_PAGE_SIZE); }, [sort, filter]);
+
             useEffect(() => {
                 if (!window.db) return;
-                return window.firestore.onSnapshot(window.firestore.query(col('board_posts')), (snap) => {
-                    setPosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                });
-            }, []);
+                const parts = [];
+                if (filter !== 'all') parts.push(window.firestore.where("category", "==", filter));
+                parts.push(window.firestore.orderBy(sort === 'like' ? "likeCount" : "createdAt", "desc"));
+                parts.push(window.firestore.limit(pageSize));
+                return window.firestore.onSnapshot(
+                    window.firestore.query(col('board_posts'), ...parts),
+                    (snap) => {
+                        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setPosts(rows);
+                        setReachedEnd(rows.length < pageSize);   // 요청한 만큼 못 채웠으면 끝
+                    }
+                );
+            }, [sort, filter, pageSize]);
 
-            // 목록 카드에 댓글 수를 보여주려면 어차피 전체가 필요하므로,
-            // 글마다 따로 구독하지 않고 한 번에 받아 화면에서 걸러 쓴다.
+            // 댓글은 열어본 글의 것만 받는다. 목록 카드의 댓글 수는 글 문서에
+            // 함께 저장해 둔 commentCount 를 쓴다(전체 댓글을 받지 않기 위해).
             useEffect(() => {
-                if (!window.db) return;
-                return window.firestore.onSnapshot(window.firestore.query(col('board_comments')), (snap) => {
-                    setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                });
-            }, []);
-
-            const commentCountOf = (postId) => comments.filter(c => c.postId === postId).length;
+                if (!window.db || !selectedId) { setComments([]); return; }
+                return window.firestore.onSnapshot(
+                    window.firestore.query(col('board_comments'), window.firestore.where("postId", "==", selectedId)),
+                    (snap) => setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+                );
+            }, [selectedId]);
 
             // 글마다 태그가 다르므로, 보이는 글들의 내 태그를 한 번에 계산해 둔다.
             useEffect(() => {
@@ -1454,16 +1469,12 @@
 
             const selected = posts.find(p => p.id === selectedId) || null;
 
-            const visiblePosts = useMemo(() => {
-                // 블라인드된 글은 관리자와 작성자 본인에게만 남긴다.
-                let list = posts.filter(p => !p.hidden || isAdmin || myTags[p.id] === p.authorTag);
-                if (filter !== 'all') list = list.filter(p => p.category === filter);
-                const at = (p) => p.createdAt?.seconds || 0;
-                list.sort((a, b) => sort === 'like'
-                    ? (b.likedBy?.length || 0) - (a.likedBy?.length || 0) || at(b) - at(a)
-                    : at(b) - at(a));
-                return list;
-            }, [posts, filter, sort, isAdmin, myTags]);
+            // 정렬·필터·개수는 서버 쿼리가 이미 처리했다.
+            // 여기서는 블라인드된 글만 걷어낸다(관리자와 작성자 본인에게는 남긴다).
+            const visiblePosts = useMemo(
+                () => posts.filter(p => !p.hidden || isAdmin || myTags[p.id] === p.authorTag),
+                [posts, isAdmin, myTags]
+            );
 
             const submitPost = async (e) => {
                 e.preventDefault();
@@ -1478,6 +1489,9 @@
                         nonce,
                         authorTag: await makeAnonTag(nonce, user.uid),
                         likedBy: [],
+                        // likedBy 배열 길이로는 서버 정렬을 할 수 없어 개수를 따로 둔다.
+                        likeCount: 0,
+                        commentCount: 0,
                         reportedBy: [],
                         hidden: false,
                         createdAt: window.firestore.serverTimestamp()
@@ -1504,6 +1518,9 @@
                         authorTag: await makeAnonTag(selected.nonce, user.uid),
                         createdAt: window.firestore.serverTimestamp()
                     });
+                    await window.firestore.updateDoc(ref('board_posts', selected.id), {
+                        commentCount: (selected.commentCount || 0) + 1
+                    });
                     setCommentDraft("");
                 } catch (err) {
                     alert("등록 실패: " + err.message);
@@ -1516,8 +1533,10 @@
                 const tag = myTags[post.id];
                 if (!tag) return;
                 const likedBy = post.likedBy || [];
+                const next = likedBy.includes(tag) ? likedBy.filter(t => t !== tag) : [...likedBy, tag];
                 await window.firestore.updateDoc(ref('board_posts', post.id), {
-                    likedBy: likedBy.includes(tag) ? likedBy.filter(t => t !== tag) : [...likedBy, tag]
+                    likedBy: next,
+                    likeCount: next.length
                 });
             };
 
@@ -1537,7 +1556,7 @@
 
             const removePost = async (post) => {
                 if (!confirm("이 글을 삭제하시겠습니까? 삭제된 글은 복구할 수 없습니다.")) return;
-                for (const c of comments.filter(c => c.postId === post.id)) {
+                for (const c of comments) {
                     await window.firestore.deleteDoc(ref('board_comments', c.id));
                 }
                 await window.firestore.deleteDoc(ref('board_posts', post.id));
@@ -1551,6 +1570,12 @@
             const removeComment = async (comment) => {
                 if (!confirm("이 댓글을 삭제하시겠습니까?")) return;
                 await window.firestore.deleteDoc(ref('board_comments', comment.id));
+                const post = posts.find(x => x.id === comment.postId);
+                if (post) {
+                    await window.firestore.updateDoc(ref('board_posts', post.id), {
+                        commentCount: Math.max(0, (post.commentCount || 0) - 1)
+                    });
+                }
             };
 
             // ── 글 상세 ──────────────────────────────────────────────
@@ -1558,8 +1583,7 @@
                 const myTag = myTags[selected.id];
                 const mine = myTag && myTag === selected.authorTag;
                 const liked = myTag && (selected.likedBy || []).includes(myTag);
-                const sorted = comments.filter(c => c.postId === selected.id)
-                    .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                const sorted = comments.slice().sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
                 // 같은 글 안에서 등장 순서대로 익명1, 익명2… 를 붙인다.
                 const order = [];
                 sorted.forEach(c => { if (c.authorTag && !order.includes(c.authorTag)) order.push(c.authorTag); });
@@ -1723,11 +1747,20 @@
                                     <p className="text-sm text-slate-700 leading-relaxed line-clamp-3 whitespace-pre-wrap break-words">{post.content}</p>
                                     <div className="flex items-center gap-4 mt-3 text-xs font-bold text-slate-400">
                                         <span className={`flex items-center gap-1 ${liked ? 'text-brand-600' : ''}`}><Icon name="heart" size={13} /> {(post.likedBy || []).length}</span>
-                                        <span className="flex items-center gap-1"><Icon name="message-circle" size={13} /> {commentCountOf(post.id)}</span>
+                                        <span className="flex items-center gap-1"><Icon name="message-circle" size={13} /> {post.commentCount || 0}</span>
                                     </div>
                                 </button>
                             );
                         })}
+
+                        {!reachedEnd && (
+                            <button
+                                onClick={() => setPageSize(n => n + BOARD_PAGE_SIZE)}
+                                className="w-full py-3 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-brand-300 hover:text-brand-600 transition-colors"
+                            >
+                                더 보기
+                            </button>
+                        )}
                     </div>
                 </div>
             );
