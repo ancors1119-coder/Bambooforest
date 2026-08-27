@@ -14,10 +14,61 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
+
+    <!--
+        디자인 테마: Red & White
+        - brand : 서비스 기본 색(루비 레드). 버튼/내비게이션/링크/포커스 링에 사용.
+        - slate : 기본 중립색. 차가운 회색 대신 붉은기가 살짝 도는 웜 그레이로 재정의했다.
+                  (마크업 전체가 slate-* 를 쓰고 있어, 여기서 한 번만 덮어쓰면 전체가 따뜻해진다.)
+        - red / amber / green : 위험 · 주의 · 정상 상태를 나타내는 의미 색.
+          brand 와 red 는 같은 계열이므로, 위험 상태는 '진하게 채운' 배지로 구분한다.
+    -->
+    <script>
+        // CDN 로드가 실패해도 이 스크립트가 통째로 죽지 않도록 방어한다.
+        window.tailwind = window.tailwind || {};
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50:  '#fff5f5',
+                            100: '#ffe3e3',
+                            200: '#ffc9c9',
+                            300: '#ffa8a8',
+                            400: '#ff6b6b',
+                            500: '#f03e3e',
+                            600: '#d92b2b',
+                            700: '#b81f1f',
+                            800: '#961b1b',
+                            900: '#7a1a1a',
+                            950: '#450a0a'
+                        },
+                        slate: {
+                            50:  '#faf7f7',
+                            100: '#f3eeee',
+                            200: '#e7e0e0',
+                            300: '#d3c9c9',
+                            400: '#a79c9c',
+                            500: '#7c7373',
+                            600: '#5e5757',
+                            700: '#4a4444',
+                            800: '#322e2e',
+                            900: '#211e1e',
+                            950: '#131111'
+                        }
+                    },
+                    boxShadow: {
+                        card: '0 1px 2px rgba(33, 30, 30, 0.04), 0 8px 24px -12px rgba(150, 27, 27, 0.12)',
+                        brand: '0 10px 24px -12px rgba(217, 43, 43, 0.55)'
+                    }
+                }
+            }
+        };
+    </script>
+
     <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
     <!-- Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
@@ -47,15 +98,65 @@
     </script>
 
     <style>
-        body { font-family: 'Inter', 'Noto Sans KR', sans-serif; background-color: #f3f4f6; }
-        .sidebar-item { transition: all 0.2s; }
-        .sidebar-item:hover, .sidebar-item.active { background-color: #eff6ff; color: #2563eb; }
-        .sidebar-item.active { border-right: 3px solid #2563eb; }
+        /* ── 디자인 토큰 (Red & White) ───────────────────────────────── */
+        :root {
+            --brand-50:  #fff5f5;
+            --brand-100: #ffe3e3;
+            --brand-200: #ffc9c9;
+            --brand-500: #f03e3e;
+            --brand-600: #d92b2b;
+            --brand-700: #b81f1f;
+            --ink:       #211e1e;
+            --ink-soft:  #7c7373;
+            --line:      #e7e0e0;
+            --surface:   #ffffff;
+            --canvas:    #fbf8f8;
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+            color: var(--ink);
+            /* 흰 바탕 위로 아주 옅은 레드 글로우를 깔아 화면 전체 톤을 잡는다. */
+            background-color: var(--canvas);
+            background-image:
+                radial-gradient(900px 420px at 100% -8%, rgba(217, 43, 43, 0.07), transparent 60%),
+                radial-gradient(720px 360px at -10% 0%, rgba(217, 43, 43, 0.045), transparent 62%);
+            background-attachment: fixed;
+        }
+
+        ::selection { background: var(--brand-200); color: var(--brand-700); }
+
+        /* ── 사이드바 ────────────────────────────────────────────────── */
+        .sidebar-item {
+            position: relative;
+            transition: background-color 0.18s ease, color 0.18s ease;
+        }
+        .sidebar-item:hover { background-color: var(--brand-50); color: var(--brand-600); }
+        .sidebar-item.active {
+            background-color: var(--brand-50);
+            color: var(--brand-700);
+            font-weight: 700;
+        }
+        /* 활성 항목은 왼쪽 레드 바로 표시한다. */
+        .sidebar-item.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 60%;
+            border-radius: 0 3px 3px 0;
+            background: var(--brand-600);
+        }
+
+        /* ── 모션 ────────────────────────────────────────────────────── */
         .fade-in { animation: fadeIn 0.3s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .chart-path { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: draw 2s ease-out forwards; }
         @keyframes draw { to { stroke-dashoffset: 0; } }
-        /* Range Slider Custom Styling */
+
+        /* ── 폼 요소 ─────────────────────────────────────────────────── */
         input[type=range] {
             -webkit-appearance: none;
             width: 100%;
@@ -66,29 +167,49 @@
             height: 20px; /* Larger touch target for mobile */
             width: 20px;
             border-radius: 50%;
-            background: #2563eb;
+            background: var(--brand-600);
             cursor: pointer;
             margin-top: -8px;
-            box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2563eb;
+            box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--brand-600);
         }
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%;
             height: 4px;
             cursor: pointer;
-            background: #cbd5e1;
+            background: var(--line);
             border-radius: 2px;
         }
+        input[type=checkbox], input[type=radio] { accent-color: var(--brand-600); }
+
+        /* 브라우저 기본 포커스 링도 브랜드 색으로 맞춘다. */
+        :where(input, select, textarea, button, a):focus-visible {
+            outline: 2px solid var(--brand-500);
+            outline-offset: 2px;
+        }
+
+        /* ── 스크롤바 ────────────────────────────────────────────────── */
+        * { scrollbar-color: var(--brand-200) transparent; scrollbar-width: thin; }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--brand-200);
+            border: 3px solid transparent;
+            background-clip: content-box;
+            border-radius: 999px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: var(--brand-500); background-clip: content-box; }
+
         .action-item:hover .action-tools { opacity: 1; }
         .action-tools { opacity: 0; transition: opacity 0.2s; }
         /* Mobile specific adjustments */
         @media (max-width: 768px) {
             .action-tools { opacity: 1; } /* Always show tools on mobile since no hover */
         }
-        
+
         @media print {
             .no-print { display: none !important; }
             .print-only { display: block !important; }
-            body { background: white; }
+            body { background: white; background-image: none; }
             #root { margin: 0; padding: 0; }
         }
     </style>
@@ -120,16 +241,17 @@
 
         const Loading = () => (
             <div className="flex justify-center items-center h-full min-h-[400px]">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
             </div>
         );
 
         const Badge = ({ type, text }) => {
+            // brand 와 위험 색이 같은 레드 계열이므로, 위험 단계만 '꽉 채운' 배지로 구분한다.
             const styles = {
-                critical: "bg-red-100 text-red-700 border-red-200",
-                warning: "bg-yellow-100 text-yellow-800 border-yellow-200",
+                critical: "bg-red-600 text-white border-red-600 shadow-sm",
+                warning: "bg-amber-100 text-amber-800 border-amber-200",
                 good: "bg-green-100 text-green-700 border-green-200",
-                neutral: "bg-gray-100 text-gray-700 border-gray-200"
+                neutral: "bg-slate-100 text-slate-700 border-slate-200"
             };
             return <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${styles[type] || styles.neutral}`}>{text}</span>;
         };
@@ -348,17 +470,17 @@
                 <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 fade-in backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-8 border border-slate-200">
                         <div className="text-center mb-6">
-                            <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                <Icon name="lock" size={24} className="text-slate-700" />
+                            <div className="w-12 h-12 bg-brand-50 border border-brand-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                <Icon name="lock" size={24} className="text-brand-600" />
                             </div>
                             <h2 className="text-xl font-bold text-slate-800">관리자 인증</h2>
                         </div>
                         <form onSubmit={handleSubmit} className="space-y-4">
-                            <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(false); }} className="w-full px-4 py-3 border border-slate-300 rounded-lg text-center tracking-widest text-lg" placeholder="비밀번호 입력" autoFocus />
-                            {error && <p className="text-red-500 text-xs text-center font-medium">비밀번호가 일치하지 않습니다.</p>}
+                            <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(false); }} className="w-full px-4 py-3 border border-slate-300 rounded-lg text-center tracking-widest text-lg focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" placeholder="비밀번호 입력" autoFocus />
+                            {error && <p className="text-red-600 text-xs text-center font-medium">비밀번호가 일치하지 않습니다.</p>}
                             <div className="flex gap-2">
-                                <button type="button" onClick={onClose} className="flex-1 py-3 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">취소</button>
-                                <button type="submit" className="flex-1 py-3 text-white bg-slate-800 rounded-lg hover:bg-slate-900">확인</button>
+                                <button type="button" onClick={onClose} className="flex-1 py-3 font-bold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">취소</button>
+                                <button type="submit" className="flex-1 py-3 font-bold text-white bg-brand-600 rounded-lg hover:bg-brand-700 shadow-brand transition-colors">확인</button>
                             </div>
                         </form>
                     </div>
@@ -397,19 +519,19 @@
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-full flex flex-col">
                     <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
                         <h3 className="font-bold text-slate-800 text-sm">실행 과제 (Action Items)</h3>
-                        <div className="flex gap-2"><span className="text-xs bg-white px-2 py-1 rounded border text-slate-600">전체: {actions.length}건</span><span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded border border-blue-200">진행 중: {actions.filter(a => !a.completed).length}건</span></div>
+                        <div className="flex gap-2"><span className="text-xs bg-white px-2 py-1 rounded border text-slate-600">전체: {actions.length}건</span><span className="text-xs bg-brand-100 text-brand-700 px-2 py-1 rounded border border-brand-200">진행 중: {actions.filter(a => !a.completed).length}건</span></div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[300px]">
                         {actions.length === 0 && <p className="text-xs text-slate-400 text-center py-4">등록된 실행 과제가 없습니다.</p>}
                         {actions.map(action => (
-                            <div key={action.id} className={`action-item flex gap-3 items-start p-3 border rounded-lg transition-all ${action.completed ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200 hover:border-blue-300'}`}>
-                                <button onClick={() => toggleStatus(action)} className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${action.completed ? 'bg-green-500 border-green-500' : 'bg-white border-slate-300 hover:border-blue-400'}`} title={action.completed ? "완료됨 (다시 클릭하여 취소)" : "완료 처리"}>{action.completed && <Icon name="check" size={12} className="text-white" />}</button>
-                                <div className="flex-1 min-w-0">{editingId === action.id ? (<div className="flex gap-2 items-center animate-fade-in"><input value={editText} onChange={e => setEditText(e.target.value)} className="flex-1 text-xs border border-blue-300 rounded px-2 py-1 outline-none shadow-sm" autoFocus onKeyDown={e => { if(e.key === 'Enter') saveEdit(); else if(e.key === 'Escape') setEditingId(null); }} /><button onClick={saveEdit} className="text-green-600 hover:bg-green-50 p-1 rounded"><Icon name="check" size={14} /></button><button onClick={() => setEditingId(null)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Icon name="x" size={14} /></button></div>) : (<p className={`text-xs break-words leading-relaxed cursor-pointer select-none ${action.completed ? 'text-slate-400 line-through' : 'text-slate-700'}`} onClick={() => startEdit(action)} title="클릭하여 수정">{action.text}</p>)}</div>
-                                {editingId !== action.id && (<div className="action-tools flex gap-1"><button onClick={() => startEdit(action)} className="text-slate-400 hover:text-blue-500 p-1 rounded hover:bg-blue-50 transition-colors" title="수정"><Icon name="pencil" size={14} /></button><button onClick={() => handleRequestDelete(action.id)} className={`p-1 rounded transition-colors ${deleteConfirmId === action.id ? 'bg-red-100 text-red-600' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'}`} title={deleteConfirmId === action.id ? "삭제 확인 (한번 더 클릭)" : "삭제"}><Icon name={deleteConfirmId === action.id ? "alert-circle" : "trash-2"} size={14} /></button></div>)}
+                            <div key={action.id} className={`action-item flex gap-3 items-start p-3 border rounded-lg transition-all ${action.completed ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200 hover:border-brand-300'}`}>
+                                <button onClick={() => toggleStatus(action)} className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${action.completed ? 'bg-green-500 border-green-500' : 'bg-white border-slate-300 hover:border-brand-400'}`} title={action.completed ? "완료됨 (다시 클릭하여 취소)" : "완료 처리"}>{action.completed && <Icon name="check" size={12} className="text-white" />}</button>
+                                <div className="flex-1 min-w-0">{editingId === action.id ? (<div className="flex gap-2 items-center animate-fade-in"><input value={editText} onChange={e => setEditText(e.target.value)} className="flex-1 text-xs border border-brand-300 rounded px-2 py-1 outline-none shadow-sm" autoFocus onKeyDown={e => { if(e.key === 'Enter') saveEdit(); else if(e.key === 'Escape') setEditingId(null); }} /><button onClick={saveEdit} className="text-green-600 hover:bg-green-50 p-1 rounded"><Icon name="check" size={14} /></button><button onClick={() => setEditingId(null)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Icon name="x" size={14} /></button></div>) : (<p className={`text-xs break-words leading-relaxed cursor-pointer select-none ${action.completed ? 'text-slate-400 line-through' : 'text-slate-700'}`} onClick={() => startEdit(action)} title="클릭하여 수정">{action.text}</p>)}</div>
+                                {editingId !== action.id && (<div className="action-tools flex gap-1"><button onClick={() => startEdit(action)} className="text-slate-400 hover:text-brand-500 p-1 rounded hover:bg-brand-50 transition-colors" title="수정"><Icon name="pencil" size={14} /></button><button onClick={() => handleRequestDelete(action.id)} className={`p-1 rounded transition-colors ${deleteConfirmId === action.id ? 'bg-red-100 text-red-600' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'}`} title={deleteConfirmId === action.id ? "삭제 확인 (한번 더 클릭)" : "삭제"}><Icon name={deleteConfirmId === action.id ? "alert-circle" : "trash-2"} size={14} /></button></div>)}
                             </div>
                         ))}
                     </div>
-                    <form onSubmit={handleAdd} className="p-3 border-t bg-slate-50 rounded-b-xl flex gap-2"><input value={input} onChange={e => setInput(e.target.value)} placeholder="새로운 실행 과제 입력..." className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-blue-400 bg-white" /><button className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm">추가</button></form>
+                    <form onSubmit={handleAdd} className="p-3 border-t bg-slate-50 rounded-b-xl flex gap-2"><input value={input} onChange={e => setInput(e.target.value)} placeholder="새로운 실행 과제 입력..." className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-brand-400 bg-white" /><button className="bg-brand-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-brand-700 transition-colors shadow-sm">추가</button></form>
                 </div>
             );
         };
@@ -476,8 +598,8 @@
 
         const RiskBadge = ({ level }) => {
             const map = {
-                high: "bg-red-100 text-red-700 border-red-200",
-                medium: "bg-orange-100 text-orange-700 border-orange-200",
+                high: "bg-red-600 text-white border-red-600 shadow-sm",
+                medium: "bg-amber-100 text-amber-700 border-amber-200",
                 low: "bg-green-100 text-green-700 border-green-200"
             };
             const label = level === "high" ? "높음" : level === "medium" ? "보통" : "낮음";
@@ -628,7 +750,7 @@
                     <h2 className="text-2xl font-bold text-slate-800 mb-2">{submitted.type === "complaint" ? "접수 완료" : "제출 완료"}</h2>
                     <p className="text-slate-500 mb-2">{submitted.type === "complaint" ? "고충·의견이 관리자 처리함에 접수되었습니다." : "소중한 의견이 안전하게 저장되었습니다."}</p>
                     {submitted.type === "complaint" && <p className="text-sm font-bold text-slate-700 mb-6">접수번호: {submitted.caseNo}</p>}
-                    <button onClick={() => { setSubmitted(null); setSurveyData({ ...DEFAULT_SURVEY_DATA }); setKeywordInput(""); setTouchedFields({}); setPulseComments({}); }} className="text-blue-600 font-bold hover:underline">추가 작성하기</button>
+                    <button onClick={() => { setSubmitted(null); setSurveyData({ ...DEFAULT_SURVEY_DATA }); setKeywordInput(""); setTouchedFields({}); setPulseComments({}); }} className="text-brand-600 font-bold hover:underline">추가 작성하기</button>
                 </div>
             );
 
@@ -646,7 +768,7 @@
                                     <label className="block text-sm font-bold text-slate-700 mb-2">접수 방식</label>
                                     <div className="grid grid-cols-2 gap-2">
                                         {[{ value: "anonymous", label: "익명" }, { value: "named", label: "기명" }].map(opt => (
-                                            <button key={opt.value} type="button" onClick={() => setComplaintData({...complaintData, reporterMode: opt.value, teamId: opt.value === "anonymous" ? "" : complaintData.teamId})} className={`py-3 rounded-xl border text-sm font-bold ${complaintData.reporterMode === opt.value ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"}`}>{opt.label}</button>
+                                            <button key={opt.value} type="button" onClick={() => setComplaintData({...complaintData, reporterMode: opt.value, teamId: opt.value === "anonymous" ? "" : complaintData.teamId})} className={`py-3 rounded-xl border text-sm font-bold ${complaintData.reporterMode === opt.value ? "bg-brand-600 text-white border-brand-600" : "bg-white text-slate-600 border-slate-200 hover:border-brand-300"}`}>{opt.label}</button>
                                         ))}
                                     </div>
                                     {complaintData.reporterMode === "anonymous" && (
@@ -658,18 +780,18 @@
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-slate-700 mb-2">소속 부서</label>
-                                            <select value={complaintData.teamId} onChange={e => setComplaintData({...complaintData, teamId: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200" required>
+                                            <select value={complaintData.teamId} onChange={e => setComplaintData({...complaintData, teamId: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200" required>
                                                 <option value="">부서를 선택해주세요</option>
                                                 {teamStats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                             </select>
                                         </div>
                                         <div>
                                             <label className="block text-sm font-bold text-slate-700 mb-2">성명</label>
-                                            <input value={complaintData.reporterName} onChange={e => setComplaintData({...complaintData, reporterName: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="성명" />
+                                            <input value={complaintData.reporterName} onChange={e => setComplaintData({...complaintData, reporterName: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="성명" />
                                         </div>
                                         <div>
                                             <label className="block text-sm font-bold text-slate-700 mb-2">연락처 또는 이메일</label>
-                                            <input value={complaintData.contact} onChange={e => setComplaintData({...complaintData, contact: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="후속 확인 가능 연락처" />
+                                            <input value={complaintData.contact} onChange={e => setComplaintData({...complaintData, contact: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="후속 확인 가능 연락처" />
                                         </div>
                                     </div>
                                 )}
@@ -677,41 +799,41 @@
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">고충 유형</label>
-                                        <select value={complaintData.category} onChange={e => setComplaintData({...complaintData, category: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200">
+                                        <select value={complaintData.category} onChange={e => setComplaintData({...complaintData, category: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
                                             {COMPLAINT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                                         </select>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">긴급도</label>
-                                        <select value={complaintData.urgency} onChange={e => setComplaintData({...complaintData, urgency: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200">
+                                        <select value={complaintData.urgency} onChange={e => setComplaintData({...complaintData, urgency: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
                                             {URGENCY_OPTIONS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                                         </select>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">발생일</label>
-                                        <input type="date" value={complaintData.incidentDate} onChange={e => setComplaintData({...complaintData, incidentDate: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                                        <input type="date" value={complaintData.incidentDate} onChange={e => setComplaintData({...complaintData, incidentDate: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">제목</label>
-                                        <input value={complaintData.subject} onChange={e => setComplaintData({...complaintData, subject: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="예: 반복 야근과 업무 배분 문제" />
+                                        <input value={complaintData.subject} onChange={e => setComplaintData({...complaintData, subject: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="예: 반복 야근과 업무 배분 문제" />
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">관련자/관련부서</label>
-                                        <input value={complaintData.relatedParty} onChange={e => setComplaintData({...complaintData, relatedParty: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="특정이 어렵다면 비워두세요" />
+                                        <input value={complaintData.relatedParty} onChange={e => setComplaintData({...complaintData, relatedParty: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="특정이 어렵다면 비워두세요" />
                                     </div>
                                 </div>
 
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">상세 내용</label>
-                                    <textarea value={complaintData.details} onChange={e => setComplaintData({...complaintData, details: e.target.value})} rows="7" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none" placeholder="발생 경위, 빈도, 영향, 이미 요청한 사항 등을 적어주세요." required />
+                                    <textarea value={complaintData.details} onChange={e => setComplaintData({...complaintData, details: e.target.value})} rows="7" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="발생 경위, 빈도, 영향, 이미 요청한 사항 등을 적어주세요." required />
                                 </div>
 
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">희망 조치</label>
-                                    <textarea value={complaintData.desiredAction} onChange={e => setComplaintData({...complaintData, desiredAction: e.target.value})} rows="3" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none" placeholder="예: 업무 조정, 면담, 분리 조치, 제도 개선 등" />
+                                    <textarea value={complaintData.desiredAction} onChange={e => setComplaintData({...complaintData, desiredAction: e.target.value})} rows="3" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="예: 업무 조정, 면담, 분리 조치, 제도 개선 등" />
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -731,15 +853,15 @@
                                     </label>
                                 </div>
 
-                                <label className="flex items-start gap-3 p-4 rounded-xl border border-blue-100 bg-blue-50 cursor-pointer">
+                                <label className="flex items-start gap-3 p-4 rounded-xl border border-brand-100 bg-brand-50 cursor-pointer">
                                     <input type="checkbox" checked={complaintData.privacyConsent} onChange={e => setComplaintData({...complaintData, privacyConsent: e.target.checked})} className="mt-1" required />
-                                    <span className="text-xs md:text-sm text-blue-900 leading-relaxed">
+                                    <span className="text-xs md:text-sm text-brand-900 leading-relaxed">
                                         고충 접수·처리 목적의 개인정보 수집·이용 안내를 확인했습니다. 민감하거나 제3자를 특정할 수 있는 정보는 필요한 범위에서만 입력하며, 접수 내용은 담당자 확인·조사·조치·기록 보관 목적에 한해 사용됩니다.
                                     </span>
                                 </label>
 
                                 <div className="sticky bottom-0 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-slate-100 md:static md:mx-0 md:px-0 md:py-0 md:bg-transparent md:border-0">
-                                    <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200">고충·의견 접수</button>
+                                    <button type="submit" className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 transition shadow-lg shadow-brand-200">고충·의견 접수</button>
                                 </div>
                             </form>
                         )}
@@ -753,30 +875,30 @@
                                 <div className="mb-6 md:mb-8">
                                     <div className="flex justify-between items-center text-xs font-bold text-slate-500 mb-1.5">
                                         <span>진행률</span>
-                                        <span className="text-blue-600">{pulseProgress.done} / {pulseProgress.total}</span>
+                                        <span className="text-brand-600">{pulseProgress.done} / {pulseProgress.total}</span>
                                     </div>
                                     <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                        <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${pulseProgress.percent}%` }}></div>
+                                        <div className="h-full bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${pulseProgress.percent}%` }}></div>
                                     </div>
                                 </div>
                                 <form onSubmit={handleSurveySubmit} className="space-y-7 pb-20 md:pb-0">
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">소속 부서</label>
-                                        <select value={surveyData.teamId} onChange={e => setSurveyData({...surveyData, teamId: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200" required>
+                                        <select value={surveyData.teamId} onChange={e => setSurveyData({...surveyData, teamId: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200" required>
                                             <option value="">부서를 선택해주세요</option>
                                             {teamStats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                         </select>
                                     </div>
                                     {PULSE_CATEGORIES.map(cat => (
                                         <div key={cat.id} className="space-y-4">
-                                            <h3 className="text-sm font-bold text-blue-700 flex items-center gap-2 pt-1">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{cat.label}
+                                            <h3 className="text-sm font-bold text-brand-700 flex items-center gap-2 pt-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-brand-500"></span>{cat.label}
                                             </h3>
                                             {PULSE_FIELDS.filter(f => f.category === cat.id).map(f => (
                                                 <div key={f.id} className="bg-slate-50 p-5 rounded-xl border border-slate-100 shadow-sm">
                                                     <div className="flex items-center justify-between mb-3">
                                                         <label className="block text-base font-extrabold text-slate-800">{f.label}</label>
-                                                        <span className="text-sm font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full">{surveyData[f.id]}점</span>
+                                                        <span className="text-sm font-bold text-brand-700 bg-brand-50 px-2.5 py-1 rounded-full">{surveyData[f.id]}점</span>
                                                     </div>
                                                     <p className="text-xs text-slate-400 mb-3">{f.desc}</p>
                                                     <div className="flex gap-2 overflow-x-auto pb-1">
@@ -784,10 +906,10 @@
                                                             const selected = String(surveyData[f.id]) === String(num);
                                                             const levelLabel = ['전혀 아님', '아님', '보통', '그렇다', '매우 그렇다'][num - 1];
                                                             const selectedTone = num <= 2
-                                                                ? 'border-rose-500 bg-rose-500 text-white shadow-rose-200'
+                                                                ? 'border-red-500 bg-red-500 text-white shadow-red-200'
                                                                 : num === 3
                                                                     ? 'border-amber-500 bg-amber-500 text-white shadow-amber-200'
-                                                                    : 'border-emerald-500 bg-emerald-500 text-white shadow-emerald-200';
+                                                                    : 'border-green-500 bg-green-500 text-white shadow-green-200';
                                                             return (
                                                                 <button
                                                                     key={num}
@@ -796,7 +918,7 @@
                                                                     className={`min-w-[88px] rounded-xl border px-3 py-3 text-center transition-all ${
                                                                         selected
                                                                             ? `${selectedTone} shadow-md`
-                                                                            : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50'
+                                                                            : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:bg-brand-50'
                                                                     }`}
                                                                     aria-label={`${f.label} ${num}점`}
                                                                 >
@@ -813,7 +935,7 @@
                                                                 onChange={e => setPulseComments(prev => ({ ...prev, [f.id]: e.target.value }))}
                                                                 rows="2"
                                                                 placeholder="구체적인 사유를 남겨주시면 개선에 큰 도움이 됩니다 (선택)"
-                                                                className="w-full px-3 py-2 text-xs border border-rose-200 rounded-lg bg-rose-50/50 focus:outline-none focus:ring-2 focus:ring-rose-200 resize-none"
+                                                                className="w-full px-3 py-2 text-xs border border-red-200 rounded-lg bg-red-50/50 focus:outline-none focus:ring-2 focus:ring-red-200 resize-none"
                                                             />
                                                         </div>
                                                     )}
@@ -827,9 +949,9 @@
                                             <div className="flex flex-wrap gap-2.5 mb-3 min-h-10 items-center">
                                                 {keywordList.length === 0 && <span className="text-sm text-slate-400">예: 소통 부재, 야근, 협업 개선</span>}
                                                 {keywordList.map((tag) => (
-                                                    <span key={tag} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 text-sm font-semibold border border-blue-100">
+                                                    <span key={tag} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 text-sm font-semibold border border-brand-100">
                                                         {tag}
-                                                        <button type="button" className="text-blue-500 hover:text-blue-700" onClick={() => removeKeyword(tag)} aria-label={`${tag} 삭제`}>
+                                                        <button type="button" className="text-brand-500 hover:text-brand-700" onClick={() => removeKeyword(tag)} aria-label={`${tag} 삭제`}>
                                                             <Icon name="x" size={12} />
                                                         </button>
                                                     </span>
@@ -854,7 +976,7 @@
                                         </div>
                                     </div>
                                     <div className="sticky bottom-0 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-slate-100 md:static md:mx-0 md:px-0 md:py-0 md:bg-transparent md:border-0">
-                                        <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200">익명 제출</button>
+                                        <button type="submit" className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 transition shadow-lg shadow-brand-200">익명 제출</button>
                                     </div>
                                 </form>
                             </div>
@@ -885,12 +1007,12 @@
                 }
                 const maxVal = Math.max(...data.map(d => Number(d.value)), 100);
                 const points = data.map((d, i) => { const x = (i / (data.length - 1)) * 280 + 10; const y = 100 - (Number(d.value) / maxVal) * 80 - 10; return `${x},${y}`; }).join(" ");
-                return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="activity" size={20} className="text-blue-500" /> 몰입도(eNPS) 추이</h3><div className="relative h-40 w-full mt-4"><svg viewBox="0 0 300 100" className="w-full h-full overflow-visible"><polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="chart-path"/><div className="flex justify-between text-xs text-slate-400 mt-2">{data.map((d, i) => <span key={i}>{d.label}</span>)}</div></svg></div></div>);
+                return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="activity" size={20} className="text-brand-500" /> 몰입도(eNPS) 추이</h3><div className="relative h-40 w-full mt-4"><svg viewBox="0 0 300 100" className="w-full h-full overflow-visible"><polyline points={points} fill="none" stroke="#d92b2b" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="chart-path"/><div className="flex justify-between text-xs text-slate-400 mt-2">{data.map((d, i) => <span key={i}>{d.label}</span>)}</div></svg></div></div>);
             };
             const VoEWidget = () => {
                 const allKeywords = teamStats.reduce((acc, team) => { if (team.keywords && Array.isArray(team.keywords)) team.keywords.forEach(k => { acc[k] = (acc[k] || 0) + 1; }); return acc; }, {});
                 const keywords = Object.entries(allKeywords).map(([text, count]) => ({ text, count })).sort((a,b) => b.count - a.count);
-                return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full"><h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="message-circle" size={20} className="text-purple-500" /> 구성원의 목소리 (VoE)</h3><div className="flex flex-wrap gap-2 content-start h-40 overflow-y-auto">{keywords.length === 0 ? <p className="text-sm text-slate-400 w-full text-center mt-10">등록된 키워드가 없습니다.</p> : keywords.map((k, i) => <span key={i} className="px-3 py-1.5 rounded-full text-sm font-medium border border-slate-200 bg-slate-50 text-slate-600">{k.text} <span className="text-xs opacity-50 ml-1">{k.count}</span></span>)}</div></div>);
+                return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full"><h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="message-circle" size={20} className="text-brand-500" /> 구성원의 목소리 (VoE)</h3><div className="flex flex-wrap gap-2 content-start h-40 overflow-y-auto">{keywords.length === 0 ? <p className="text-sm text-slate-400 w-full text-center mt-10">등록된 키워드가 없습니다.</p> : keywords.map((k, i) => <span key={i} className="px-3 py-1.5 rounded-full text-sm font-medium border border-slate-200 bg-slate-50 text-slate-600">{k.text} <span className="text-xs opacity-50 ml-1">{k.count}</span></span>)}</div></div>);
             };
             const ScorePill = ({ value }) => {
                 const score = Number(value);
@@ -900,9 +1022,9 @@
 
             return (
                 <div className="space-y-6 fade-in">
-                    <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg text-sm text-blue-800 flex items-center gap-2 mb-4"><Icon name="calendar" size={16} /> 현재 조회 중인 데이터: <span className="font-bold">{currentPeriod}</span></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><KPICard metric={{...globalMetrics.enps, icon: "users", color: "text-blue-600 bg-blue-50"}} /><KPICard metric={{...globalMetrics.safety, icon: "shield-check", color: "text-green-600 bg-green-50"}} /><KPICard metric={{...globalMetrics.burnout, icon: "flame", color: "text-red-600 bg-red-50", unit: "%"}} /><KPICard metric={{...globalMetrics.growth, icon: "trending-up", color: "text-purple-600 bg-purple-50", unit: "%"}} /></div>
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 p-6"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="bar-chart-2" size={20} className="text-slate-400" /> 팀별 조직진단 히트맵 ({currentPeriod})</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">핵심 위험요인</th><th className="p-3 text-center">업무</th><th className="p-3 text-center">안전감</th><th className="p-3 text-center">성장</th><th className="p-3 text-center">몰입</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3 font-medium">{t.name}</td><td className="p-3"><span className={`w-2 h-2 rounded-full inline-block mr-2 ${t.status === '심각' ? 'bg-red-600' : t.status === '위험' ? 'bg-orange-500' : 'bg-green-500'}`}></span>{t.status}</td><td className="p-3 text-slate-500">{(t.diagnosisDrivers || []).length > 0 ? t.diagnosisDrivers.join(', ') : '특이 리스크 없음'}</td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.workload} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.safety} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.growth} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.engagement} /></td></tr>))}</tbody></table></div></div><div className="lg:col-span-1 h-full"><ActionBoardWidget user={user} /></div></div>
+                    <div className="bg-brand-50 border border-brand-100 p-3 rounded-lg text-sm text-brand-800 flex items-center gap-2 mb-4"><Icon name="calendar" size={16} /> 현재 조회 중인 데이터: <span className="font-bold">{currentPeriod}</span></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{/* 아이콘 타일은 네 장 모두 같은 브랜드 톤으로 통일하고, 좋고 나쁨은 오른쪽 증감 배지로만 나타낸다. */}<KPICard metric={{...globalMetrics.enps, icon: "users", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.safety, icon: "shield-check", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.burnout, icon: "flame", color: "text-brand-600 bg-brand-50", unit: "%"}} /><KPICard metric={{...globalMetrics.growth, icon: "trending-up", color: "text-brand-600 bg-brand-50", unit: "%"}} /></div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 p-6"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="bar-chart-2" size={20} className="text-slate-400" /> 팀별 조직진단 히트맵 ({currentPeriod})</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">핵심 위험요인</th><th className="p-3 text-center">업무</th><th className="p-3 text-center">안전감</th><th className="p-3 text-center">성장</th><th className="p-3 text-center">몰입</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3 font-medium">{t.name}</td><td className="p-3"><span className={`w-2 h-2 rounded-full inline-block mr-2 ${t.status === '심각' ? 'bg-red-600' : t.status === '위험' ? 'bg-amber-500' : 'bg-green-500'}`}></span>{t.status}</td><td className="p-3 text-slate-500">{(t.diagnosisDrivers || []).length > 0 ? t.diagnosisDrivers.join(', ') : '특이 리스크 없음'}</td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.workload} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.safety} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.growth} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.engagement} /></td></tr>))}</tbody></table></div></div><div className="lg:col-span-1 h-full"><ActionBoardWidget user={user} /></div></div>
                     <div className="h-64"><TrendChart data={chartData.trend} /></div>
                 </div>
             );
@@ -915,7 +1037,7 @@
                 <div className="max-w-4xl mx-auto bg-white shadow-lg p-10 min-h-screen fade-in print:shadow-none print:p-0">
                     <div className="flex justify-between items-center mb-10 no-print">
                         <h2 className="text-lg font-bold text-slate-500">보고서 미리보기</h2>
-                        <button onClick={handlePrint} className="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-slate-900">
+                        <button onClick={handlePrint} className="bg-brand-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-brand-700 shadow-brand transition-colors">
                             <Icon name="printer" size={16} /> PDF 저장 / 인쇄
                         </button>
                     </div>
@@ -923,10 +1045,10 @@
                         <div><h1 className="text-3xl font-bold text-slate-900">월간 조직 건강도 보고서 (Monthly HR Health)</h1><p className="text-slate-500 mt-2">{new Date().toLocaleDateString()}</p></div>
                     </div>
                     <div className="grid grid-cols-4 gap-4 bg-slate-50 p-6 rounded-xl border border-slate-200 mb-8">
-                        <div className="text-center border-r"><div className="text-xs text-slate-500">eNPS</div><div className="text-2xl font-bold text-blue-600">{globalMetrics.enps?.value}</div></div>
+                        <div className="text-center border-r"><div className="text-xs text-slate-500">eNPS</div><div className="text-2xl font-bold text-brand-600">{globalMetrics.enps?.value}</div></div>
                         <div className="text-center border-r"><div className="text-xs text-slate-500">안전감</div><div className="text-2xl font-bold text-green-600">{globalMetrics.safety?.value}</div></div>
                         <div className="text-center border-r"><div className="text-xs text-slate-500">번아웃</div><div className="text-2xl font-bold text-red-600">{globalMetrics.burnout?.value}</div></div>
-                        <div className="text-center"><div className="text-xs text-slate-500">성장</div><div className="text-2xl font-bold text-purple-600">{globalMetrics.growth?.value}</div></div>
+                        <div className="text-center"><div className="text-xs text-slate-500">성장</div><div className="text-2xl font-bold text-brand-600">{globalMetrics.growth?.value}</div></div>
                     </div>
                     <div className="space-y-6">
                         <h3 className="text-xl font-bold border-l-4 border-red-500 pl-3">리스크 진단 (Risk Assessment)</h3>
@@ -1081,7 +1203,7 @@
                         <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><Icon name="x" size={20}/></button>
                         
                         <div className="mb-6 flex items-center gap-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white">
+                            <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-600 rounded-lg flex items-center justify-center text-white">
                                 <Icon name="sparkles" size={20} />
                             </div>
                             <div>
@@ -1099,7 +1221,7 @@
 
                         {step === 'loading' && (
                             <div className="py-12 text-center">
-                                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-600 mx-auto mb-4"></div>
                                 <p className="text-slate-600 font-medium animate-pulse">조직 데이터를 분석하여 최적의 실행 계획을 생성 중입니다...</p>
                             </div>
                         )}
@@ -1113,15 +1235,15 @@
                                 <h4 className="text-sm font-bold text-slate-700 mb-3">🚀 AI가 제안하는 3단계 실행 계획</h4>
                                 <div className="space-y-4">
                                     {aiPlan.steps.map((s, i) => (
-                                        <div key={i} className="p-3 bg-blue-50/50 rounded border border-blue-100">
-                                            <h4 className="font-bold text-blue-800 text-sm">{s.title}</h4>
+                                        <div key={i} className="p-3 bg-brand-50/50 rounded border border-brand-100">
+                                            <h4 className="font-bold text-brand-800 text-sm">{s.title}</h4>
                                             <p className="text-xs text-slate-700 mt-1">{s.desc}</p>
                                         </div>
                                     ))}
                                 </div>
                                 <div className="mt-6 flex justify-end gap-2">
                                     <button onClick={onClose} className="px-4 py-2 text-slate-500 hover:bg-slate-50 rounded text-sm">닫기</button>
-                                    <button onClick={savePlan} className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 shadow-md">실행 계획 저장</button>
+                                    <button onClick={savePlan} className="px-4 py-2 bg-brand-600 text-white rounded text-sm font-bold hover:bg-brand-700 shadow-md">실행 계획 저장</button>
                                 </div>
                                 <p className="text-[10px] text-slate-400 mt-2 text-right">
                                     {isMock && "⚠️ API 한도 초과로 시뮬레이션 모드로 전환되었습니다."} 
@@ -1269,7 +1391,7 @@
             return (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in h-full overflow-y-auto">
                     <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                        <Icon name="microscope" className="text-blue-600"/> 조직 심층 분석 및 개선 제언
+                        <Icon name="microscope" className="text-brand-600"/> 조직 심층 분석 및 개선 제언
                     </h2>
                     <p className="text-sm text-slate-500 mb-6">기준 기간: <span className="font-bold text-slate-700">{currentPeriod}</span></p>
                     
@@ -1278,17 +1400,18 @@
                             <p className="text-xs text-red-500 font-bold">고위험 팀</p>
                             <p className="text-2xl font-black text-red-700 mt-1">{teamRiskRows.filter(t => t.riskLevel === 'high').length}개</p>
                         </div>
-                        <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
-                            <p className="text-xs text-orange-500 font-bold">번아웃 지수</p>
-                            <p className="text-2xl font-black text-orange-700 mt-1">{burnoutScore.toFixed(0)}%</p>
+                        <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+                            <p className="text-xs text-amber-500 font-bold">번아웃 지수</p>
+                            <p className="text-2xl font-black text-amber-700 mt-1">{burnoutScore.toFixed(0)}%</p>
                         </div>
-                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                            <p className="text-xs text-blue-500 font-bold">eNPS</p>
-                            <p className="text-2xl font-black text-blue-700 mt-1">{enpsScore > 0 ? '+' : ''}{enpsScore}</p>
+                        {/* 경고성 지표(고위험/번아웃)만 색을 쓰고, 일반 지표는 중립색으로 둔다. */}
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <p className="text-xs text-slate-500 font-bold">eNPS</p>
+                            <p className="text-2xl font-black text-slate-800 mt-1">{enpsScore > 0 ? '+' : ''}{enpsScore}</p>
                         </div>
-                        <div className="bg-violet-50 p-4 rounded-xl border border-violet-100">
-                            <p className="text-xs text-violet-500 font-bold">추이 변화</p>
-                            <p className="text-2xl font-black text-violet-700 mt-1">{trendDelta > 0 ? '+' : ''}{trendDelta}</p>
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <p className="text-xs text-slate-500 font-bold">추이 변화</p>
+                            <p className="text-2xl font-black text-slate-800 mt-1">{trendDelta > 0 ? '+' : ''}{trendDelta}</p>
                         </div>
                     </div>
 
@@ -1303,7 +1426,7 @@
                                         <div key={team.id} className="bg-white p-3 rounded-lg border border-slate-200">
                                             <div className="flex justify-between items-center">
                                                 <p className="font-bold text-slate-800">{team.name}</p>
-                                                <span className={`text-xs font-bold px-2 py-1 rounded ${team.riskLevel === 'high' ? 'bg-red-100 text-red-700' : team.riskLevel === 'medium' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                                                <span className={`text-xs font-bold px-2 py-1 rounded ${team.riskLevel === 'high' ? 'bg-red-100 text-red-700' : team.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
                                                     Risk {team.riskScore}
                                                 </span>
                                             </div>
@@ -1335,16 +1458,16 @@
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             {recommendations.map((rec, idx) => (
                                 <div key={idx} className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm relative overflow-hidden">
-                                    <div className={`absolute top-0 left-0 w-1 h-full ${rec.type === 'urgent' ? 'bg-red-500' : rec.type === 'warning' ? 'bg-orange-500' : 'bg-green-500'}`}></div>
+                                    <div className={`absolute top-0 left-0 w-1 h-full ${rec.type === 'urgent' ? 'bg-red-500' : rec.type === 'warning' ? 'bg-amber-500' : 'bg-green-500'}`}></div>
                                     <div className="flex justify-between items-center mb-2">
-                                        <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${rec.type === 'urgent' ? 'bg-red-100 text-red-700' : rec.type === 'warning' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>{rec.category}</span>
+                                        <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${rec.type === 'urgent' ? 'bg-red-100 text-red-700' : rec.type === 'warning' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{rec.category}</span>
                                         <span className="text-[11px] text-slate-400">우선순위 {rec.priorityScore}</span>
                                     </div>
                                     <h4 className="font-bold text-slate-900 text-md mb-1">{rec.title}</h4>
                                     <p className="text-sm text-slate-600 mb-4 leading-relaxed">{rec.desc}</p>
                                     <button 
                                         onClick={() => setSelectedSolution(rec)}
-                                        className="w-full py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center justify-center gap-2"
+                                        className="w-full py-2 border border-brand-200 bg-brand-50 rounded-lg text-sm font-bold text-brand-700 hover:bg-brand-600 hover:border-brand-600 hover:text-white transition-colors flex items-center justify-center gap-2"
                                     >
                                         <Icon name="check-square" size={16}/> {rec.action} 계획 수립
                                     </button>
@@ -1427,10 +1550,10 @@
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in h-full flex flex-col">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                            <Icon name="database" className="text-blue-600"/> 데이터 관리 (Data Management)
+                            <Icon name="database" className="text-brand-600"/> 데이터 관리 (Data Management)
                         </h2>
                         <span className="text-sm text-slate-500">
-                            기간: <span className="font-bold text-slate-800">{currentPeriod}</span> | 총 <span className="font-bold text-blue-600">{responses.length}</span>건
+                            기간: <span className="font-bold text-slate-800">{currentPeriod}</span> | 총 <span className="font-bold text-brand-600">{responses.length}</span>건
                         </span>
                     </div>
 
@@ -1481,7 +1604,7 @@
         const PulseScoreBadge = ({ value }) => {
             const score = Number(value);
             if (!Number.isFinite(score)) return <span className="px-2 py-1 rounded text-xs font-bold border bg-slate-50 text-slate-400 border-slate-100">-</span>;
-            const tone = score <= 2.5 ? 'bg-rose-50 text-rose-700 border-rose-100' : score <= 3.4 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100';
+            const tone = score <= 2.5 ? 'bg-red-50 text-red-700 border-red-100' : score <= 3.4 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-green-50 text-green-700 border-green-100';
             return <span className={`px-2 py-1 rounded text-xs font-bold border ${tone}`}>{score.toFixed(1)}</span>;
         };
 
@@ -1553,18 +1676,19 @@
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in h-full flex flex-col">
                     <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                            <Icon name="bar-chart-2" className="text-blue-600" /> 조직진단 현황 (Pulse Survey)
+                            <Icon name="bar-chart-2" className="text-brand-600" /> 조직진단 현황 (Pulse Survey)
                         </h2>
                         <span className="text-sm text-slate-500">
-                            기간: <span className="font-bold text-slate-800">{currentPeriod}</span> | 총 <span className="font-bold text-blue-600">{responses.length}</span>건
+                            기간: <span className="font-bold text-slate-800">{currentPeriod}</span> | 총 <span className="font-bold text-brand-600">{responses.length}</span>건
                         </span>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                         <div className="bg-slate-50 rounded-xl p-4 border border-slate-100"><p className="text-xs text-slate-500">총 응답</p><p className="text-2xl font-bold text-slate-800">{stats.total}건</p></div>
-                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-100"><p className="text-xs text-slate-500">평균 종합점수</p><p className="text-2xl font-bold text-blue-600">{stats.total ? stats.avgAll.toFixed(1) : '-'}</p></div>
-                        <div className="bg-rose-50 rounded-xl p-4 border border-rose-100"><p className="text-xs text-rose-600">위험 응답(저점 3개↑)</p><p className="text-2xl font-bold text-rose-700">{stats.lowRiskCount}건</p></div>
-                        <div className="bg-blue-50 rounded-xl p-4 border border-blue-100"><p className="text-xs text-blue-600">사유 코멘트 등록</p><p className="text-2xl font-bold text-blue-700">{stats.commentCount}건</p></div>
+                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-100"><p className="text-xs text-slate-500">평균 종합점수</p><p className="text-2xl font-bold text-brand-600">{stats.total ? stats.avgAll.toFixed(1) : '-'}</p></div>
+                        <div className="bg-red-50 rounded-xl p-4 border border-red-100"><p className="text-xs text-red-600">위험 응답(저점 3개↑)</p><p className="text-2xl font-bold text-red-700">{stats.lowRiskCount}건</p></div>
+                        {/* 옆의 '위험 응답'이 눈에 띄도록, 단순 집계 항목은 중립색으로 둔다. */}
+                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-200"><p className="text-xs text-slate-500">사유 코멘트 등록</p><p className="text-2xl font-bold text-slate-800">{stats.commentCount}건</p></div>
                     </div>
 
                     <div className="flex flex-wrap gap-3 mb-4">
@@ -1599,11 +1723,11 @@
                                             <td className="p-3 text-slate-500 text-xs whitespace-nowrap">{formatDateTime(res.createdAt)}</td>
                                             <td className="p-3 font-medium text-slate-800 whitespace-nowrap">{res.teamName}</td>
                                             <td className="p-3 text-center"><PulseScoreBadge value={res.avg} /></td>
-                                            <td className="p-3 text-center">{res.lowFields.length > 0 ? <span className="text-xs font-bold text-rose-600">{res.lowFields.length}개</span> : <span className="text-xs text-slate-400">없음</span>}</td>
+                                            <td className="p-3 text-center">{res.lowFields.length > 0 ? <span className="text-xs font-bold text-red-600">{res.lowFields.length}개</span> : <span className="text-xs text-slate-400">없음</span>}</td>
                                             <td className="p-3 text-slate-600 text-xs italic max-w-xs truncate" title={res.keywords}>{res.keywords || '-'}</td>
-                                            <td className="p-3 text-center">{Object.keys(res.comments || {}).length > 0 ? <Icon name="message-circle" size={14} className="text-blue-500 inline-block" /> : '-'}</td>
+                                            <td className="p-3 text-center">{Object.keys(res.comments || {}).length > 0 ? <Icon name="message-circle" size={14} className="text-brand-500 inline-block" /> : '-'}</td>
                                             <td className="p-3 text-center">
-                                                <button onClick={() => setSelected(res)} className="text-blue-600 hover:underline text-xs font-bold">보기</button>
+                                                <button onClick={() => setSelected(res)} className="text-brand-600 hover:underline text-xs font-bold">보기</button>
                                             </td>
                                         </tr>
                                     ))
@@ -1630,7 +1754,7 @@
                                                 <PulseScoreBadge value={selected[f.id]} />
                                             </div>
                                             {selected.comments && selected.comments[f.id] && (
-                                                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg p-2 mt-2">{selected.comments[f.id]}</p>
+                                                <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg p-2 mt-2">{selected.comments[f.id]}</p>
                                             )}
                                         </div>
                                     ))}
@@ -1775,9 +1899,9 @@
 
             const statusTone = (status) => {
                 if (status === "종결") return "bg-green-100 text-green-700 border-green-200";
-                if (status === "조사중" || status === "조치중") return "bg-blue-100 text-blue-700 border-blue-200";
+                if (status === "조사중" || status === "조치중") return "bg-brand-100 text-brand-700 border-brand-200";
                 if (status === "보류") return "bg-slate-100 text-slate-600 border-slate-200";
-                return "bg-orange-100 text-orange-700 border-orange-200";
+                return "bg-amber-100 text-amber-700 border-amber-200";
             };
 
             return (
@@ -1786,7 +1910,7 @@
                         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
                             <div>
                                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    <Icon name="inbox" className="text-blue-600"/> 고충 처리함
+                                    <Icon name="inbox" className="text-brand-600"/> 고충 처리함
                                 </h2>
                                 <p className="text-sm text-slate-500 mt-2">기준 기간: <span className="font-bold text-slate-700">{currentPeriod}</span></p>
                             </div>
@@ -1795,23 +1919,24 @@
                                     <p className="text-xs text-slate-500 font-bold">전체</p>
                                     <p className="text-2xl font-black text-slate-800">{stats.total}</p>
                                 </div>
-                                <div className="bg-orange-50 border border-orange-100 rounded-xl p-3">
-                                    <p className="text-xs text-orange-600 font-bold">미종결</p>
-                                    <p className="text-2xl font-black text-orange-700">{stats.open}</p>
+                                <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                                    <p className="text-xs text-amber-600 font-bold">미종결</p>
+                                    <p className="text-2xl font-black text-amber-700">{stats.open}</p>
                                 </div>
                                 <div className="bg-red-50 border border-red-100 rounded-xl p-3">
                                     <p className="text-xs text-red-600 font-bold">고위험</p>
                                     <p className="text-2xl font-black text-red-700">{stats.high}</p>
                                 </div>
-                                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
-                                    <p className="text-xs text-blue-600 font-bold">보호요청</p>
-                                    <p className="text-2xl font-black text-blue-700">{stats.protection}</p>
+                                {/* 옆의 '고위험'(채운 레드)과 구분되도록 테두리형으로 둔다. */}
+                                <div className="bg-white border border-brand-300 rounded-xl p-3">
+                                    <p className="text-xs text-brand-600 font-bold">보호요청</p>
+                                    <p className="text-2xl font-black text-brand-700">{stats.protection}</p>
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="접수번호, 제목, 부서 검색" className="md:col-span-2 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" />
+                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="접수번호, 제목, 부서 검색" className="md:col-span-2 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100" />
                             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
                                 <option value="전체">상태 전체</option>
                                 {CASE_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
@@ -1848,7 +1973,7 @@
                                             <tr key={item.id} className="hover:bg-slate-50">
                                                 <td className="p-3 font-mono text-xs text-slate-500 whitespace-nowrap">{item.caseNo || item.id.slice(0, 8)}</td>
                                                 <td className="p-3 min-w-[220px]">
-                                                    <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-blue-700 text-left">{item.subject || "-"}</button>
+                                                    <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-brand-700 text-left">{item.subject || "-"}</button>
                                                     <p className="text-xs text-slate-400 mt-1 line-clamp-1">{item.details}</p>
                                                 </td>
                                                 <td className="p-3 whitespace-nowrap">{item.teamName}</td>
@@ -1861,7 +1986,7 @@
                                                 </td>
                                                 <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{formatDateTime(item.createdAt)}</td>
                                                 <td className="p-3 text-center whitespace-nowrap">
-                                                    <button onClick={() => openCase(item)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded" title="상세 보기"><Icon name="eye" size={16} /></button>
+                                                    <button onClick={() => openCase(item)} className="text-brand-600 hover:bg-brand-50 p-1.5 rounded" title="상세 보기"><Icon name="eye" size={16} /></button>
                                                     <button onClick={() => deleteCase(item)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded" title="삭제"><Icon name="trash-2" size={16} /></button>
                                                 </td>
                                             </tr>
@@ -1898,9 +2023,9 @@
                                         </div>
 
                                         {selectedCase.reporterMode === "named" && (
-                                            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-                                                <h4 className="font-bold text-blue-900 text-sm mb-2">신고자 정보</h4>
-                                                <p className="text-sm text-blue-900">성명: {selectedCase.reporterName || "-"} · 연락처: {selectedCase.contact || "-"}</p>
+                                            <div className="bg-brand-50 border border-brand-100 rounded-xl p-4">
+                                                <h4 className="font-bold text-brand-800 text-sm mb-2">신고자 정보</h4>
+                                                <p className="text-sm text-slate-800">성명: {selectedCase.reporterName || "-"} · 연락처: {selectedCase.contact || "-"}</p>
                                             </div>
                                         )}
 
@@ -1953,7 +2078,7 @@
                                             <label className="block text-xs font-bold text-slate-500 mb-1">처리 결과</label>
                                             <textarea value={detailDraft.outcome} onChange={e => setDetailDraft({...detailDraft, outcome: e.target.value})} rows="5" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white resize-none" placeholder="조치 내용, 통보 여부, 후속관리 기준" />
                                         </div>
-                                        <button onClick={saveCase} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700">저장</button>
+                                        <button onClick={saveCase} className="w-full bg-brand-600 text-white py-3 rounded-lg font-bold hover:bg-brand-700">저장</button>
 
                                         <div className="border-t border-slate-200 pt-4">
                                             <h4 className="font-bold text-slate-800 mb-3">처리 이력</h4>
@@ -1998,8 +2123,9 @@
             return (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in">
                     <h2 className="text-lg font-bold text-slate-800 mb-2">팀 데이터 관리</h2>
-                    <p className="text-sm text-blue-600 mb-4 font-medium">현재 선택된 기간: {currentPeriod} 에 데이터를 추가합니다.</p>
-                    <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6 bg-slate-50 p-4 rounded-lg"><input placeholder="팀명" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="md:col-span-2 border p-2 rounded text-sm" required /><select value={formData.workload} onChange={e => setFormData({...formData, workload: e.target.value})} className="border p-2 rounded text-sm"><option value="적정">업무: 적정</option><option value="과부하">업무: 과부하</option></select><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="border p-2 rounded text-sm"><option value="양호">상태: 양호</option><option value="위험">상태: 위험</option></select><button className="bg-blue-600 text-white md:col-span-1 rounded font-bold text-sm">저장</button></form>
+                    {/* 단순 안내문은 중립색으로 — 레드는 오류/경고에만 쓴다. */}
+                    <p className="text-sm text-slate-500 mb-4 font-medium">현재 선택된 기간: <span className="font-bold text-slate-700">{currentPeriod}</span> 에 데이터를 추가합니다.</p>
+                    <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6 bg-slate-50 p-4 rounded-lg"><input placeholder="팀명" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="md:col-span-2 border p-2 rounded text-sm" required /><select value={formData.workload} onChange={e => setFormData({...formData, workload: e.target.value})} className="border p-2 rounded text-sm"><option value="적정">업무: 적정</option><option value="과부하">업무: 과부하</option></select><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="border p-2 rounded text-sm"><option value="양호">상태: 양호</option><option value="위험">상태: 위험</option></select><button className="bg-brand-600 text-white md:col-span-1 rounded font-bold text-sm">저장</button></form>
                     <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3">{t.name}</td><td className="p-3"><Badge type={t.status === '위험' ? 'critical' : 'good'} text={t.status} /></td><td className="p-3 text-xs text-slate-500">{t.keywords ? t.keywords.join(", ") : "-"}</td><td className="p-3"><button onClick={() => handleDelete(t.id)} className="text-red-500 text-xs">삭제</button></td></tr>))}</tbody></table></div>
                 </div>
             );
@@ -2143,9 +2269,9 @@
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in max-w-4xl">
                     <div className="mb-8 border-b pb-6">
                         <h2 className="text-lg font-bold mb-4">Google AI 설정</h2>
-                        <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-4">
-                            <p className="text-xs text-indigo-700 font-bold">저장 위치: 클라우드(Firestore)</p>
-                            <p className="text-xs text-indigo-600 mt-1">관리자 설정 메뉴에서 등록/수정 시 모든 관리자 화면에 동기화됩니다.</p>
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+                            <p className="text-xs text-slate-700 font-bold">저장 위치: 클라우드(Firestore)</p>
+                            <p className="text-xs text-slate-500 mt-1">관리자 설정 메뉴에서 등록/수정 시 모든 관리자 화면에 동기화됩니다.</p>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="md:col-span-2">
@@ -2159,7 +2285,7 @@
                                 />
                             </div>
                             <div className="flex items-end">
-                                <button onClick={handleSaveApiKey} disabled={isSavingAiConfig} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded font-bold hover:bg-indigo-700 disabled:bg-slate-400">
+                                <button onClick={handleSaveApiKey} disabled={isSavingAiConfig} className="w-full bg-brand-600 text-white px-4 py-2.5 rounded font-bold hover:bg-brand-700 disabled:bg-slate-400">
                                     {isSavingAiConfig ? "저장 중..." : "API 키 저장"}
                                 </button>
                             </div>
@@ -2178,7 +2304,7 @@
                                 </select>
                             </div>
                             <div className="space-y-2">
-                                <button onClick={handleSearchModels} disabled={isSearchingModels} className="w-full bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 disabled:bg-slate-400">
+                                <button onClick={handleSearchModels} disabled={isSearchingModels} className="w-full bg-brand-600 text-white px-4 py-2 rounded font-bold hover:bg-brand-700 disabled:bg-slate-400">
                                     {isSearchingModels ? "검색 중..." : "모델 자동 검색"}
                                 </button>
                                 <button onClick={handleResetAiSettings} className="w-full bg-slate-100 text-slate-700 px-4 py-2 rounded font-bold hover:bg-slate-200">
@@ -2190,24 +2316,25 @@
                     <div className="mb-8 border-b pb-6">
                         <h2 className="text-lg font-bold mb-4">자동화 도구</h2>
                         <div className="flex flex-col md:flex-row gap-4">
-                            <div className="bg-blue-50 p-4 rounded-lg flex-1 flex flex-col justify-center">
+                            <div className="bg-brand-50 p-4 rounded-lg flex-1 flex flex-col justify-center">
                                 <div>
-                                    <h3 className="font-bold text-blue-800">데이터 수동 새로고침 ({currentPeriod})</h3>
-                                    <p className="text-xs text-blue-600 mt-1">※ 데이터 등록 시 자동으로 계산되므로, 누락 시에만 사용하세요.</p>
+                                    <h3 className="font-bold text-brand-800">데이터 수동 새로고침 ({currentPeriod})</h3>
+                                    <p className="text-xs text-brand-600 mt-1">※ 데이터 등록 시 자동으로 계산되므로, 누락 시에만 사용하세요.</p>
                                 </div>
-                                <button onClick={handleManualRefresh} className="mt-2 w-full bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700">새로고침</button>
+                                <button onClick={handleManualRefresh} className="mt-2 w-full bg-brand-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-brand-700">새로고침</button>
                             </div>
                             
-                            <div className="bg-orange-50 p-4 rounded-lg flex-1 flex flex-col justify-center">
-                                <div><h3 className="font-bold text-orange-800">현재 데이터 초기화</h3><p className="text-xs text-orange-600 mt-1">현재 조회 중인 월의 KPI 값을 삭제합니다.</p></div>
-                                <button onClick={resetPeriodData} className={`mt-2 w-full text-white px-4 py-2 rounded-lg font-bold transition-colors ${resetConfirm ? 'bg-red-600' : 'bg-orange-500 hover:bg-orange-600'}`}>
+                            <div className="bg-amber-50 p-4 rounded-lg flex-1 flex flex-col justify-center">
+                                <div><h3 className="font-bold text-amber-800">현재 데이터 초기화</h3><p className="text-xs text-amber-600 mt-1">현재 조회 중인 월의 KPI 값을 삭제합니다.</p></div>
+                                <button onClick={resetPeriodData} className={`mt-2 w-full text-white px-4 py-2 rounded-lg font-bold transition-colors ${resetConfirm ? 'bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
                                     {resetConfirm ? "확실합니까? (클릭)" : "초기화"}
                                 </button>
                             </div>
 
                             <div className="bg-red-50 p-4 rounded-lg flex-1 flex flex-col justify-center">
                                 <div><h3 className="font-bold text-red-800">차트 기록 전체 삭제</h3><p className="text-xs text-red-600 mt-1">저장된 eNPS 추이를 모두 삭제합니다.</p></div>
-                                <button onClick={clearChartData} className="mt-2 w-full bg-red-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-700">전체 삭제</button>
+                                {/* 파괴적 동작은 '테두리형'으로 둬서, 같은 레드인 기본 버튼과 확실히 구분한다. */}
+                                <button onClick={clearChartData} className="mt-2 w-full bg-white border-2 border-red-600 text-red-700 px-4 py-2 rounded-lg font-bold hover:bg-red-600 hover:text-white transition-colors">전체 삭제</button>
                             </div>
                         </div>
                     </div>
@@ -2266,22 +2393,27 @@
                         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} 
                         md:translate-x-0 no-print
                     `}>
-                        <div className="h-16 flex items-center px-6 border-b border-slate-100 justify-between">
-                            <span className="font-bold text-lg text-slate-800">대나무숲</span>
-                            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-500">
+                        <div className="h-16 flex items-center px-5 border-b border-slate-100 justify-between">
+                            <div className="flex items-center gap-2.5">
+                                <span className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center shadow-brand">
+                                    <Icon name="message-square" size={17} />
+                                </span>
+                                <span className="font-extrabold text-lg text-slate-900 tracking-tight">대나무숲</span>
+                            </div>
+                            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-500 hover:text-brand-600">
                                 <Icon name="x" size={24} />
                             </button>
                         </div>
-                        <nav className="flex-1 p-4 space-y-1">
+                        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                             {menu.map(item => (
-                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id ? 'active' : 'text-slate-600 hover:bg-slate-50'}`}>
+                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id ? 'active' : 'text-slate-600'}`}>
                                     <Icon name={item.icon} size={20} />
                                     {item.label}
                                 </button>
                             ))}
                         </nav>
                         <div className="p-4 border-t border-slate-100">
-                            <div className={`p-3 rounded-lg border flex items-center gap-2 mb-2 ${role === 'admin' ? 'bg-slate-800 text-white' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                            <div className={`p-3 rounded-lg border flex items-center gap-2 mb-2 ${role === 'admin' ? 'bg-slate-900 text-white border-slate-900' : 'bg-brand-50 text-brand-700 border-brand-100'}`}>
                                 <span className="text-xs font-bold">{role === 'admin' ? '관리자 모드' : '구성원 모드'}</span>
                             </div>
                             <div className="flex items-center gap-2 text-xs text-slate-500 px-1"><div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div><span>시스템 연동됨</span></div>
@@ -2370,7 +2502,7 @@
             if (!user) return <Loading />;
 
             return (
-                <div className="flex min-h-screen bg-[#f8fafc]">
+                <div className="flex min-h-screen">
                     <Sidebar 
                         currentView={currentView} 
                         setView={setCurrentView} 
@@ -2382,26 +2514,29 @@
                         <header className="flex justify-between items-center mb-6 md:mb-8 no-print">
                             <div className="flex items-center gap-3">
                                 {/* Mobile Menu Button */}
-                                <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden text-slate-600 p-1 rounded-md hover:bg-slate-100">
+                                <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden text-slate-600 p-1 rounded-md hover:bg-brand-50 hover:text-brand-600">
                                     <Icon name="menu" size={24} />
                                 </button>
-                                
+
                                 <div>
-                                    <h1 className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight">{role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : '고충 접수') : 'HR 관리자 콘솔'}</h1>
+                                    <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
+                                        <span className="hidden md:inline-block w-1 h-6 rounded-full bg-brand-600"></span>
+                                        {role === 'employee' ? (currentView === 'pulse-survey' ? '조직 진단' : '고충 접수') : 'HR 관리자 콘솔'}
+                                    </h1>
                                     {role === 'admin' && (
-                                        <div className="mt-2 flex items-center gap-2">
-                                            <p className="hidden md:block text-sm text-blue-600 font-bold">🕒 조회 기간:</p>
-                                            <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="text-xs p-1 rounded border border-blue-200">{availableYears.map(y => <option key={y} value={y}>{y}년</option>)}</select>
-                                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="text-xs p-1 rounded border border-blue-200">{Array.from({length:12}, (_,i)=>i+1).map(m => <option key={m} value={m}>{m}월</option>)}</select>
+                                        <div className="mt-2 flex items-center gap-2 md:pl-[18px]">
+                                            <p className="hidden md:block text-sm text-brand-600 font-bold">🕒 조회 기간:</p>
+                                            <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="text-xs p-1 rounded-md border border-brand-200 bg-white text-brand-700 font-semibold">{availableYears.map(y => <option key={y} value={y}>{y}년</option>)}</select>
+                                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="text-xs p-1 rounded-md border border-brand-200 bg-white text-brand-700 font-semibold">{Array.from({length:12}, (_,i)=>i+1).map(m => <option key={m} value={m}>{m}월</option>)}</select>
                                         </div>
                                     )}
                                 </div>
                             </div>
-                            
+
                             <div className="flex items-center gap-4">
                                 <div className="bg-white border border-slate-200 rounded-lg p-1 flex shadow-sm">
-                                    <button onClick={() => setShowAdminLogin(true)} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'admin' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>관리자</button>
-                                    <button onClick={() => setRole('employee')} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'employee' ? 'bg-green-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>구성원</button>
+                                    <button onClick={() => setShowAdminLogin(true)} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'admin' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-brand-50 hover:text-brand-600'}`}>관리자</button>
+                                    <button onClick={() => setRole('employee')} className={`px-2 py-1.5 md:px-3 text-xs font-bold rounded-md transition ${role === 'employee' ? 'bg-brand-600 text-white' : 'text-slate-500 hover:bg-brand-50 hover:text-brand-600'}`}>구성원</button>
                                 </div>
                             </div>
                         </header>
