@@ -263,6 +263,51 @@
         // PIN 원문은 저장하지 않고 SHA-256 해시만 남긴다.
         const LOOKUP_SALT = 'bambooforest-lookup-v1';
 
+        // ── 접수번호 ──────────────────────────────────────────────────
+        // 예전 형식(GC-202602-410381)은 16자에 의미 없는 숫자라 외우기도, 받아
+        // 적기도 어려웠다. 앞의 'GC-202602-' 는 신고자에게 아무 정보도 주지 않는다.
+        // 대신 자연물 낱말 두 개와 네 자리 숫자를 쓴다. 눈으로 한 번 보면 남고,
+        // 전화로 불러주기도 쉽다. (예: 푸른대나무-7421)
+        //
+        // 조합 수는 24 × 24 × 10000 = 약 576만. 게다가 문서 ID 는 접수번호와
+        // PIN 을 함께 해시한 값이라, 실제로 겹치려면 둘 다 같아야 한다.
+        // 그래도 덮어쓰기를 원천 차단하려고 저장 직전에 빈자리인지 확인한다.
+        const CASE_WORDS_A = [
+            '맑은', '푸른', '고요한', '잔잔한', '산뜻한', '포근한', '다정한', '든든한',
+            '씩씩한', '상냥한', '새로운', '따뜻한', '시원한', '눈부신', '향긋한', '부드러운',
+            '넉넉한', '정다운', '슬기로운', '자유로운', '평온한', '반가운', '소중한', '굳건한'
+        ];
+        const CASE_WORDS_B = [
+            '대나무', '소나무', '바람', '시냇물', '들판', '언덕', '새벽', '노을',
+            '별빛', '달빛', '이슬', '안개', '숲길', '오솔길', '물결', '구름',
+            '하늘', '햇살', '바다', '강물', '눈송이', '단풍', '봄비', '아침'
+        ];
+
+        const pickRandom = (arr) => {
+            const buf = new Uint32Array(1);
+            window.crypto.getRandomValues(buf);
+            return arr[buf[0] % arr.length];
+        };
+
+        const makeCaseNo = () => {
+            const buf = new Uint32Array(1);
+            window.crypto.getRandomValues(buf);
+            const digits = String(buf[0] % 10000).padStart(4, '0');
+            return `${pickRandom(CASE_WORDS_A)}${pickRandom(CASE_WORDS_B)}-${digits}`;
+        };
+
+        // 하이픈을 빼거나 공백을 넣어 입력해도 찾을 수 있게 후보를 만든다.
+        // 기존 GC- 형식 접수번호의 해시가 달라지면 안 되므로, 정규화를 강제하지 않고
+        // 입력 원본을 먼저 시도한 뒤 변형을 덧붙인다.
+        const caseNoCandidates = (raw) => {
+            const trimmed = String(raw).trim();
+            const compact = trimmed.replace(/\s+/g, '');
+            const forms = [trimmed, compact];
+            const m = compact.match(/^([가-힣]+)-?(\d{4})$/);
+            if (m) forms.push(`${m[1]}-${m[2]}`);
+            return [...new Set(forms.filter(Boolean))];
+        };
+
         const makeLookupHash = async (caseNo, pin) => {
             if (!window.crypto?.subtle) {
                 // crypto.subtle 은 HTTPS(또는 localhost)에서만 동작한다.
@@ -848,14 +893,26 @@
                 if (!/^[0-9]{4,8}$/.test(complaintData.lookupPin)) return alert("조회 PIN을 숫자 4~8자리로 입력해주세요.");
                 if (!complaintData.privacyConsent) return alert("개인정보 수집·이용 안내 확인이 필요합니다.");
 
-                const caseNo = `GC-${currentPeriod.replace("-", "")}-${Date.now().toString().slice(-6)}`;
                 const risk = assessComplaintRisk(complaintData);
 
                 // PIN 원문은 절대 저장하지 않는다. 해시만 남기고 폼 데이터에서 걷어낸다.
                 const { lookupPin, ...complaintFields } = complaintData;
-                let lookupHash;
+
+                // 접수번호와 PIN 이 모두 겹치면 같은 문서 ID 가 되어 덮어쓰기가 난다.
+                // 확률은 극히 낮지만 기존 접수 건이 사라지는 사고라, 빈자리를 확인하고 쓴다.
+                let caseNo, lookupHash;
                 try {
-                    lookupHash = await makeLookupHash(caseNo, lookupPin);
+                    const casesPath = ['artifacts', APP_ID, 'public', 'data', 'complaint_cases'];
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                        caseNo = makeCaseNo();
+                        lookupHash = await makeLookupHash(caseNo, lookupPin);
+                        const taken = await window.firestore.getDoc(
+                            window.firestore.doc(window.db, ...casesPath, lookupHash)
+                        );
+                        if (!taken.exists()) break;
+                        lookupHash = null;
+                    }
+                    if (!lookupHash) return alert("접수번호 생성에 실패했습니다. 잠시 후 다시 시도해주세요.");
                 } catch (err) {
                     return alert(err.message);
                 }
@@ -909,7 +966,7 @@
                                 <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-2">
                                     <div className="min-w-0">
                                         <p className="text-[11px] text-slate-500 font-bold">접수번호</p>
-                                        <p className="font-mono text-base font-bold text-slate-800 truncate">{submitted.caseNo}</p>
+                                        <p className="text-lg font-extrabold text-slate-900 truncate tracking-tight">{submitted.caseNo}</p>
                                     </div>
                                     <button
                                         type="button"
@@ -1230,11 +1287,16 @@
                 try {
                     // 해시가 곧 문서 ID 다. 목록을 훑지 않고 한 건만 직접 읽으므로,
                     // 보안 규칙에서 이 컬렉션의 list 권한을 관리자에게만 줄 수 있다.
-                    const hash = await makeLookupHash(caseNoInput, pinInput);
-                    const snap = await window.firestore.getDoc(
-                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', hash)
-                    );
-                    if (!snap.exists()) {
+                    // 하이픈이나 공백을 다르게 입력해도 찾히도록 몇 가지 형태를 시도한다.
+                    let snap = null, hash = null;
+                    for (const form of caseNoCandidates(caseNoInput)) {
+                        hash = await makeLookupHash(form, pinInput);
+                        const found = await window.firestore.getDoc(
+                            window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', hash)
+                        );
+                        if (found.exists()) { snap = found; break; }
+                    }
+                    if (!snap) {
                         // 어느 쪽이 틀렸는지 알려주지 않는다 (접수번호 대입 공격 방지).
                         setError("일치하는 접수 건이 없습니다. 접수번호와 PIN 을 다시 확인해주세요.");
                         setFoundId(null);
@@ -1269,7 +1331,7 @@
                         <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-4 md:p-8">
                             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                                 <div className="min-w-0">
-                                    <p className="font-mono text-xs text-slate-500">{caseData.caseNo}</p>
+                                    <p className="text-xs font-bold text-slate-500">{caseData.caseNo}</p>
                                     <h1 className="text-xl md:text-2xl font-bold text-slate-800 mt-1 break-words">{caseData.subject}</h1>
                                     <p className="text-sm text-slate-500 mt-1">
                                         {getCategoryLabel(caseData.category)} · 긴급도 {getUrgencyLabel(caseData.urgency)} · 접수 {formatDateTime(caseData.createdAt)}
@@ -1332,8 +1394,8 @@
                                 <input
                                     value={caseNoInput}
                                     onChange={e => setCaseNoInput(e.target.value)}
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white font-mono focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                                    placeholder="예: GC-202602-123456"
+                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white font-semibold focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                    placeholder="예: 푸른대나무-7421"
                                     autoFocus
                                 />
                             </div>
@@ -1396,7 +1458,7 @@
 
             const steps = [
                 { n: '1', title: '접수하기', desc: '익명 또는 기명으로 작성합니다. 익명을 고르면 부서·이름·연락처를 아예 받지 않습니다.' },
-                { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
+                { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 ‘푸른대나무-7421’ 같은 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
                 { n: '3', title: '담당자 확인', desc: '접수 → 검토중 → 조사중 → 조치중 → 종결 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
                 { n: '4', title: '결과 확인', desc: "‘내 접수 조회’ 에서 접수번호와 PIN 을 넣으면 처리 상태와 담당자 답변을 볼 수 있습니다." }
             ];
@@ -2957,7 +3019,7 @@
                                     ) : (
                                         filteredCases.map(item => (
                                             <tr key={item.id} className="hover:bg-slate-50">
-                                                <td className="p-3 font-mono text-xs text-slate-500 whitespace-nowrap">{item.caseNo || item.id.slice(0, 8)}</td>
+                                                <td className="p-3 text-xs font-bold text-slate-600 whitespace-nowrap">{item.caseNo || item.id.slice(0, 8)}</td>
                                                 <td className="p-3 min-w-[220px]">
                                                     <div className="flex items-center gap-2 flex-wrap">
                                                         <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-brand-700 text-left">{item.subject || "-"}</button>
@@ -2995,7 +3057,7 @@
                                 <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-4">
                                     <div>
                                         <div className="flex flex-wrap items-center gap-2 mb-2">
-                                            <span className="font-mono text-xs text-slate-500">{selectedCase.caseNo}</span>
+                                            <span className="text-xs font-bold text-slate-600">{selectedCase.caseNo}</span>
                                             <RiskBadge level={selectedCase.riskLevel} />
                                             <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusTone(detailDraft.status)}`}>{detailDraft.status}</span>
                                         </div>
