@@ -264,9 +264,10 @@
         const LOOKUP_SALT = 'bambooforest-lookup-v1';
 
         // ── 고충 접수 창구 ────────────────────────────────────────────
-        // 고충은 사내 카카오톡 채널에서 이미 운영 중이라 그쪽을 1차 창구로 둔다.
-        // 다만 카카오톡은 프로필이 그대로 보이는 '기명' 창구다. 신원을 드러내기
-        // 어려운 사안이야말로 고충 접수의 핵심이므로, 웹 익명 접수를 함께 남긴다.
+        // 고충 접수는 사내 카카오톡 채널에서 운영한다. 웹 접수 양식은 두지 않는다.
+        //
+        // 카카오톡은 프로필이 그대로 보이는 '기명' 창구다. 이름을 밝히기 어려운
+        // 이야기는 대나무숲 게시판이 받고, 두 창구의 차이를 화면에서 분명히 알린다.
         const KAKAO_CHANNEL_URL = 'https://pf.kakao.com/_kGxhxnX/chat';
 
         // ── 접수번호 ──────────────────────────────────────────────────
@@ -797,27 +798,10 @@
             return <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${map[level] || map.low}`}>리스크 {label}</span>;
         };
 
-        const SurveyView = ({ teamStats, currentPeriod, mode }) => {
-            const activeTab = mode === "pulse-survey" ? "pulse" : "complaint";
+        // 고충 접수는 사내 카카오톡 채널이 맡으므로 이 화면은 조직 진단만 담당한다.
+        const SurveyView = ({ teamStats, currentPeriod }) => {
             const [surveyData, setSurveyData] = useState({ ...DEFAULT_SURVEY_DATA });
             const [copied, setCopied] = useState(false);
-            const [complaintData, setComplaintData] = useState({
-                reporterMode: "anonymous",
-                reporterName: "",
-                contact: "",
-                teamId: "",
-                category: "workload",
-                urgency: "normal",
-                incidentDate: "",
-                relatedParty: "",
-                subject: "",
-                details: "",
-                desiredAction: "",
-                protectionRequest: "no",
-                allowContact: "no",
-                lookupPin: "",
-                privacyConsent: false
-            });
             const [submitted, setSubmitted] = useState(null);
             const [keywordInput, setKeywordInput] = useState("");
             const [touchedFields, setTouchedFields] = useState({});
@@ -877,137 +861,12 @@
                 } catch(e) { console.error(e); alert("제출 오류: " + e.message); }
             };
 
-            const resetComplaintForm = () => {
-                setComplaintData({
-                    reporterMode: "anonymous",
-                    reporterName: "",
-                    contact: "",
-                    teamId: "",
-                    category: "workload",
-                    urgency: "normal",
-                    incidentDate: "",
-                    relatedParty: "",
-                    subject: "",
-                    details: "",
-                    desiredAction: "",
-                    protectionRequest: "no",
-                    allowContact: "no",
-                    lookupPin: "",
-                    privacyConsent: false
-                });
-            };
-
-            const handleComplaintSubmit = async (e) => {
-                e.preventDefault();
-                if (complaintData.reporterMode === "named" && !complaintData.teamId) return alert("소속 부서를 선택해주세요.");
-                if (!complaintData.subject.trim()) return alert("제목을 입력해주세요.");
-                if (!complaintData.details.trim()) return alert("상세 내용을 입력해주세요.");
-                if (complaintData.reporterMode === "named" && !complaintData.reporterName.trim()) return alert("기명 접수 시 성명을 입력해주세요.");
-                if (!/^[0-9]{4,8}$/.test(complaintData.lookupPin)) return alert("조회 PIN을 숫자 4~8자리로 입력해주세요.");
-                if (!complaintData.privacyConsent) return alert("개인정보 수집·이용 안내 확인이 필요합니다.");
-
-                const risk = assessComplaintRisk(complaintData);
-
-                // PIN 원문은 절대 저장하지 않는다. 해시만 남기고 폼 데이터에서 걷어낸다.
-                const { lookupPin, ...complaintFields } = complaintData;
-
-                // 접수번호와 PIN 이 모두 겹치면 같은 문서 ID 가 되어 덮어쓰기가 난다.
-                // 확률은 극히 낮지만 기존 접수 건이 사라지는 사고라, 빈자리를 확인하고 쓴다.
-                let caseNo, lookupHash;
-                try {
-                    const casesPath = ['artifacts', APP_ID, 'public', 'data', 'complaint_cases'];
-                    for (let attempt = 0; attempt < 5; attempt++) {
-                        caseNo = makeCaseNo();
-                        lookupHash = await makeLookupHash(caseNo, lookupPin);
-                        const taken = await window.firestore.getDoc(
-                            window.firestore.doc(window.db, ...casesPath, lookupHash)
-                        );
-                        if (!taken.exists()) break;
-                        lookupHash = null;
-                    }
-                    if (!lookupHash) return alert("접수번호 생성에 실패했습니다. 잠시 후 다시 시도해주세요.");
-                } catch (err) {
-                    return alert(err.message);
-                }
-
-                const payload = {
-                    // 문서 ID 자체를 lookupHash 로 쓴다. 그래야 보안 규칙에서
-                    // "ID 를 아는 사람만 get 허용, 목록 조회(list)는 관리자만" 을 표현할 수 있다.
-                    // 필드로 갖고 있으면 결국 조회를 위해 목록 권한을 열어줘야 한다.
-                    ...complaintFields,
-                    thread: [],
-                    caseNo,
-                    period: currentPeriod,
-                    teamNameSnapshot: getTeamName(teamStats, complaintData.teamId),
-                    status: "접수",
-                    handler: "",
-                    adminMemo: "",
-                    outcome: "",
-                    riskScore: risk.riskScore,
-                    riskLevel: risk.riskLevel,
-                    riskFlags: risk.riskFlags,
-                    history: [
-                        { at: new Date().toISOString(), actor: "구성원", action: "고충 접수", note: "신규 접수" }
-                    ],
-                    createdAt: window.firestore.serverTimestamp(),
-                    updatedAt: window.firestore.serverTimestamp()
-                };
-                try {
-                    await window.firestore.setDoc(
-                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', lookupHash),
-                        payload
-                    );
-                    setSubmitted({ type: "complaint", caseNo, pin: lookupPin, riskLevel: risk.riskLevel });
-                    resetComplaintForm();
-                } catch(e) {
-                    console.error(e);
-                    alert("접수 오류: " + e.message);
-                }
-            };
-
             if(submitted) return (
                 <div className="flex flex-col items-center justify-center h-full p-4 md:p-8 text-center animate-fade-in">
                     <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4"><Icon name="check" size={32} className="text-green-600" /></div>
-                    <h2 className="text-2xl font-bold text-slate-800 mb-2">{submitted.type === "complaint" ? "접수 완료" : "제출 완료"}</h2>
-                    <p className="text-slate-500 mb-6">{submitted.type === "complaint" ? "고충·의견이 관리자 처리함에 접수되었습니다." : "소중한 의견이 안전하게 저장되었습니다."}</p>
+                    <h2 className="text-2xl font-bold text-slate-800 mb-2">제출 완료</h2>
+                    <p className="text-slate-500 mb-6">소중한 의견이 안전하게 저장되었습니다.</p>
 
-                    {submitted.type === "complaint" && (
-                        <div className="w-full max-w-md text-left">
-                            {/* 이 화면을 벗어나면 접수번호를 다시 볼 수 없으므로 최대한 눈에 띄게 안내한다. */}
-                            <div className="bg-white border-2 border-brand-300 rounded-2xl p-5 shadow-card">
-                                <p className="text-xs font-bold text-brand-700 mb-3">아래 정보를 반드시 저장해주세요</p>
-                                <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-2">
-                                    <div className="min-w-0">
-                                        <p className="text-[11px] text-slate-500 font-bold">접수번호</p>
-                                        <p className="text-lg font-extrabold text-slate-900 truncate tracking-tight">{submitted.caseNo}</p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const text = `접수번호: ${submitted.caseNo} / PIN: ${submitted.pin}`;
-                                            const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
-                                            if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(() => alert(text));
-                                            else alert(text);
-                                        }}
-                                        className="flex-shrink-0 flex items-center gap-1.5 border border-brand-200 bg-brand-50 text-brand-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-brand-600 hover:border-brand-600 hover:text-white transition-colors"
-                                    >
-                                        <Icon name={copied ? "check" : "copy"} size={14} /> {copied ? "복사됨" : "복사"}
-                                    </button>
-                                </div>
-                                <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-                                    <p className="text-[11px] text-slate-500 font-bold">조회 PIN</p>
-                                    <p className="font-mono text-base font-bold text-slate-800 tracking-[0.3em]">{submitted.pin}</p>
-                                </div>
-                                <p className="text-xs text-red-700 font-bold mt-3 flex items-start gap-1.5">
-                                    <Icon name="alert-circle" size={14} />
-                                    <span>이 화면을 벗어나면 다시 볼 수 없습니다. 분실 시 조회와 답변 확인이 불가능합니다.</span>
-                                </p>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-3 text-center">
-                                왼쪽 메뉴의 <span className="font-bold text-slate-700">‘내 접수 조회’</span> 에서 처리 상태와 담당자 답변을 확인하실 수 있습니다.
-                            </p>
-                        </div>
-                    )}
 
                     <button onClick={() => { setSubmitted(null); setSurveyData({ ...DEFAULT_SURVEY_DATA }); setKeywordInput(""); setTouchedFields({}); setPulseComments({}); }} className="text-brand-600 font-bold hover:underline mt-6">추가 작성하기</button>
                 </div>
@@ -1017,138 +876,12 @@
                 <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8">
                     <div className="bg-white rounded-2xl shadow-md border border-slate-100 p-4 md:p-8">
                         <div className="mb-6">
-                            <h1 className="text-xl md:text-2xl font-bold text-slate-800">{activeTab === "pulse" ? "조직 진단" : "고충 접수"}</h1>
-                            <p className="text-xs md:text-sm text-slate-500 mt-2">{activeTab === "pulse" ? "8개 핵심 지표를 진단하고, 개선 키워드를 태그로 추가해주세요." : "접수 내용은 목적 범위 내에서만 확인하며, 조사·보호조치가 필요한 경우 추가 확인이 필요할 수 있습니다."}</p>
+                            <h1 className="text-xl md:text-2xl font-bold text-slate-800">조직 진단</h1>
+                            <p className="text-xs md:text-sm text-slate-500 mt-2">8개 핵심 지표를 진단하고, 개선 키워드를 태그로 추가해주세요.</p>
                         </div>
 
-                        {activeTab === "complaint" && (
-                            <form onSubmit={handleComplaintSubmit} className="space-y-6 pb-20 md:pb-0">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">접수 방식</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {[{ value: "anonymous", label: "익명" }, { value: "named", label: "기명" }].map(opt => (
-                                            <button key={opt.value} type="button" onClick={() => setComplaintData({...complaintData, reporterMode: opt.value, teamId: opt.value === "anonymous" ? "" : complaintData.teamId})} className={`py-3 rounded-xl border text-sm font-bold ${complaintData.reporterMode === opt.value ? "bg-brand-600 text-white border-brand-600" : "bg-white text-slate-600 border-slate-200 hover:border-brand-300"}`}>{opt.label}</button>
-                                        ))}
-                                    </div>
-                                    {complaintData.reporterMode === "anonymous" && (
-                                        <p className="text-xs text-slate-400 mt-2">익명 접수는 소속 부서를 포함한 신원 정보를 수집하지 않습니다.</p>
-                                    )}
-                                </div>
 
-                                {complaintData.reporterMode === "named" && (
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">소속 부서</label>
-                                            <select value={complaintData.teamId} onChange={e => setComplaintData({...complaintData, teamId: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-200" required>
-                                                <option value="">부서를 선택해주세요</option>
-                                                {teamStats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">성명</label>
-                                            <input value={complaintData.reporterName} onChange={e => setComplaintData({...complaintData, reporterName: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="성명" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">연락처 또는 이메일</label>
-                                            <input value={complaintData.contact} onChange={e => setComplaintData({...complaintData, contact: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="후속 확인 가능 연락처" />
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">고충 유형</label>
-                                        <select value={complaintData.category} onChange={e => setComplaintData({...complaintData, category: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
-                                            {COMPLAINT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">긴급도</label>
-                                        <select value={complaintData.urgency} onChange={e => setComplaintData({...complaintData, urgency: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
-                                            {URGENCY_OPTIONS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">발생일</label>
-                                        <input type="date" value={complaintData.incidentDate} onChange={e => setComplaintData({...complaintData, incidentDate: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">제목</label>
-                                        <input value={complaintData.subject} onChange={e => setComplaintData({...complaintData, subject: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="예: 반복 야근과 업무 배분 문제" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">관련자/관련부서</label>
-                                        <input value={complaintData.relatedParty} onChange={e => setComplaintData({...complaintData, relatedParty: e.target.value})} className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" placeholder="특정이 어렵다면 비워두세요" />
-                                    </div>
-                                </div>
-
-                                {/* 넓은 화면에서 한 줄이 지나치게 길어지지 않도록 서술형 필드를 나란히 둔다 */}
-                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">상세 내용</label>
-                                            <textarea value={complaintData.details} onChange={e => setComplaintData({...complaintData, details: e.target.value})} rows="8" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="발생 경위, 빈도, 영향, 이미 요청한 사항 등을 적어주세요." required />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">희망 조치</label>
-                                            <textarea value={complaintData.desiredAction} onChange={e => setComplaintData({...complaintData, desiredAction: e.target.value})} rows="8" className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none" placeholder="예: 업무 조정, 면담, 분리 조치, 제도 개선 등" />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                                        <input type="checkbox" checked={complaintData.protectionRequest === "yes"} onChange={e => setComplaintData({...complaintData, protectionRequest: e.target.checked ? "yes" : "no"})} className="mt-1" />
-                                        <span>
-                                            <span className="block text-sm font-bold text-slate-800">보호조치 검토 요청</span>
-                                            <span className="block text-xs text-slate-500 mt-1">근무장소 변경, 분리, 유급휴가 등은 사실관계와 내부 절차에 따라 검토됩니다.</span>
-                                        </span>
-                                    </label>
-                                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                                        <input type="checkbox" checked={complaintData.allowContact === "yes"} onChange={e => setComplaintData({...complaintData, allowContact: e.target.checked ? "yes" : "no"})} className="mt-1" />
-                                        <span>
-                                            <span className="block text-sm font-bold text-slate-800">추가 확인 연락 동의</span>
-                                            <span className="block text-xs text-slate-500 mt-1">기명 접수 또는 연락처 기재 시에만 후속 확인이 가능합니다.</span>
-                                        </span>
-                                    </label>
-                                </div>
-
-                                {/* 익명 접수는 신원 정보를 받지 않으므로, 이 PIN 이 본인 확인의 유일한 수단이 된다. */}
-                                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">조회 PIN <span className="text-brand-600">*</span></label>
-                                    <p className="text-xs text-slate-500 mb-3">
-                                        접수 후 <span className="font-bold text-slate-700">접수번호 + PIN</span> 으로 처리 상태와 담당자 답변을 확인할 수 있습니다.
-                                        {complaintData.reporterMode === "anonymous" && " 익명 접수는 연락처를 받지 않으므로, 이 PIN 이 답변을 받을 수 있는 유일한 방법입니다."}
-                                    </p>
-                                    <input
-                                        type="password"
-                                        inputMode="numeric"
-                                        autoComplete="new-password"
-                                        maxLength={8}
-                                        value={complaintData.lookupPin}
-                                        onChange={e => setComplaintData({...complaintData, lookupPin: e.target.value.replace(/[^0-9]/g, "")})}
-                                        className="w-full md:w-52 px-4 py-3 border border-slate-200 rounded-xl bg-white tracking-[0.4em] text-center focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                                        placeholder="숫자 4~8자리"
-                                        required
-                                    />
-                                    <p className="text-xs text-slate-400 mt-2">PIN 은 암호화되어 저장되며, 관리자도 볼 수 없습니다. 분실 시 재발급이 불가능합니다.</p>
-                                </div>
-
-                                <label className="flex items-start gap-3 p-4 rounded-xl border border-brand-100 bg-brand-50 cursor-pointer">
-                                    <input type="checkbox" checked={complaintData.privacyConsent} onChange={e => setComplaintData({...complaintData, privacyConsent: e.target.checked})} className="mt-1" required />
-                                    <span className="text-xs md:text-sm text-brand-900 leading-relaxed">
-                                        고충 접수·처리 목적의 개인정보 수집·이용 안내를 확인했습니다. 민감하거나 제3자를 특정할 수 있는 정보는 필요한 범위에서만 입력하며, 접수 내용은 담당자 확인·조사·조치·기록 보관 목적에 한해 사용됩니다.
-                                    </span>
-                                </label>
-
-                                <div className="sticky bottom-0 -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-t border-slate-100 md:static md:mx-0 md:px-0 md:py-0 md:bg-transparent md:border-0">
-                                    <button type="submit" className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 transition shadow-lg shadow-brand-200">고충·의견 접수</button>
-                                </div>
-                            </form>
-                        )}
-
-                        {activeTab === "pulse" && (
+                        {(
                             <div>
                                 <div className="text-center mb-4">
                                     <h2 className="text-lg md:text-xl font-bold text-slate-800">주간 조직 진단 (Weekly Pulse Survey)</h2>
@@ -1449,15 +1182,15 @@
             const routes = [
                 {
                     icon: 'message-circle',
-                    title: '카카오톡 채널 (기본 창구)',
-                    body: '평소 쓰시던 사내 카카오톡 채널로 바로 연결됩니다. 담당자와 대화하듯 주고받을 수 있고, 별도 접수번호가 필요 없습니다.',
+                    title: '카카오톡 채널로 연결됩니다',
+                    body: '평소 쓰시던 사내 카카오톡 채널이 그대로 접수 창구입니다. 담당자와 대화하듯 주고받으실 수 있고, 별도 양식이나 접수번호가 필요 없습니다.',
                     caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 익명이 아닙니다.'
                 },
                 {
-                    icon: 'user-x',
-                    title: '웹 익명 접수',
-                    body: '이름·부서·연락처를 아예 받지 않습니다. 제출하면 접수번호가 나오고, 그 번호와 PIN 으로 진행 상황과 담당자 답변을 확인합니다.',
-                    caution: '접수번호와 PIN 을 잃어버리면 다시 찾을 수 없습니다.'
+                    icon: 'lock',
+                    title: '담당자 외에는 보지 않습니다',
+                    body: '대화 내용은 고충 처리 담당자만 확인합니다. 게시판처럼 다른 구성원에게 공개되지 않고, 동료나 상급자에게 전달되지 않습니다.',
+                    caution: '조사나 보호조치가 필요하면 담당자가 먼저 동의를 구합니다.'
                 }
             ];
 
@@ -1477,9 +1210,6 @@
                                className="bg-[#FEE500] text-[#3C1E1E] px-5 py-3 rounded-xl text-sm font-bold hover:brightness-95 transition-all flex items-center gap-2 border border-yellow-300">
                                 <Icon name="message-circle" size={16} /> 카카오톡 채널로 접수하기
                             </a>
-                            <button onClick={() => setView('complaint-form')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
-                                <Icon name="user-x" size={16} /> 웹으로 익명 접수하기
-                            </button>
                             <button onClick={() => setView('complaint-lookup')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
                                 <Icon name="search" size={16} /> 내 접수 조회
                             </button>
@@ -1506,12 +1236,16 @@
                     <div className="bg-white rounded-2xl border border-red-200 p-6 md:p-8">
                         <div className="flex items-center gap-2 mb-3">
                             <Icon name="alert-circle" size={18} className="text-red-600" />
-                            <h2 className="text-lg font-bold text-slate-800">신원이 드러나면 곤란한 일이라면</h2>
+                            <h2 className="text-lg font-bold text-slate-800">이름을 밝히기 어려운 일이라면</h2>
                         </div>
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            상급자나 동료가 관련된 사안, 보복이 걱정되는 사안은 <span className="font-bold">웹 익명 접수</span>를 이용해주세요.
-                            카카오톡은 편하지만 누가 보냈는지가 그대로 드러나, 정작 말하기 가장 어려운 이야기에는 맞지 않습니다.
+                            카카오톡은 누가 보냈는지가 담당자에게 그대로 보입니다. 이름을 밝히기 어려운 이야기라면
+                            <span className="font-bold"> 대나무숲 게시판</span>에 익명으로 남겨주세요. 다만 게시판은 전체에게 공개되고
+                            개별 조사나 보호조치로 이어지지 않으니, 사안에 따라 골라 쓰시면 됩니다.
                         </p>
+                        <button onClick={() => setView('board')} className="mt-4 bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
+                            <Icon name="message-square" size={15} /> 대나무숲 게시판으로
+                        </button>
                     </div>
                 </div>
             );
@@ -1535,24 +1269,24 @@
                     label: '고충 접수',
                     tagline: '담당자만 봅니다',
                     tone: 'slate',
-                    desc: '괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별적으로 확인과 조치가 필요한 일을 접수합니다. 사내 카카오톡 채널 또는 웹 익명 접수를 씁니다.',
-                    points: ['담당자만 열람', '카카오톡 채널은 기명', '익명이 필요하면 웹 접수'],
+                    desc: '괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별적으로 확인과 조치가 필요한 일을 접수합니다. 사내 카카오톡 채널로 연결됩니다.',
+                    points: ['담당자만 열람', '담당자와 1:1 대화', '카카오톡이라 익명은 아님'],
                     cta: '고충 접수 안내'
                 }
             ];
 
             const steps = [
-                { n: '1', title: '접수하기', desc: '웹 익명 접수에서 작성합니다. 익명을 고르면 부서·이름·연락처를 아예 받지 않습니다.' },
-                { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 ‘엔코스-73152’ 같은 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
-                { n: '3', title: '담당자 확인', desc: '접수 → 검토중 → 조사중 → 조치중 → 종결 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
-                { n: '4', title: '결과 확인', desc: "‘내 접수 조회’ 에서 접수번호와 PIN 을 넣으면 처리 상태와 담당자 답변을 볼 수 있습니다." }
+                { n: '1', title: '카카오톡 채널 열기', desc: '‘고충 접수’ 메뉴의 버튼을 누르면 사내 카카오톡 채널로 연결됩니다. 별도 양식은 없습니다.' },
+                { n: '2', title: '상황 남기기', desc: '언제, 어떤 일이 있었고, 어떤 조치를 바라시는지 적어주세요. 담당자가 확인 후 답변드립니다.' },
+                { n: '3', title: '담당자 확인', desc: '검토 → 조사 → 조치 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
+                { n: '4', title: '결과 확인', desc: '진행 상황과 결과는 같은 카카오톡 대화에서 그대로 받아보실 수 있습니다.' }
             ];
 
             const privacy = [
-                { icon: 'user-x', title: '신원을 받지 않습니다', desc: '익명 접수와 게시판 글에는 이름·부서·연락처를 수집하지 않습니다. 인원이 적은 팀에서는 부서만으로도 사람이 특정되기 때문입니다.' },
-                { icon: 'key', title: 'PIN 은 저장되지 않습니다', desc: '입력하신 PIN 은 암호화된 형태로만 남습니다. 관리자도 확인할 수 없고, 그래서 분실 시 재발급도 불가능합니다.' },
+                { icon: 'user-x', title: '신원을 받지 않습니다', desc: '게시판 글과 조직 진단에는 이름·부서·연락처를 수집하지 않습니다. 인원이 적은 팀에서는 부서만으로도 사람이 특정되기 때문입니다.' },
+                { icon: 'key', title: '로그인이 필요 없습니다', desc: '게시판과 조직 진단은 사번이나 계정 없이 바로 쓰실 수 있습니다. 누가 접속했는지 기록하지 않습니다.' },
                 { icon: 'shuffle', title: '글끼리 연결되지 않습니다', desc: '게시판 글에는 글마다 다른 익명 표식이 붙습니다. 같은 사람이 쓴 글 여러 개를 모아 글쓴이를 추정할 수 없습니다.' },
-                { icon: 'eye-off', title: '내부 검토 자료는 따로입니다', desc: '담당자가 남기는 내부 메모와 위험도 평가는 처리 목적으로만 쓰이며 신고자 화면에 표시되지 않습니다.' }
+                { icon: 'eye-off', title: '진단 결과는 팀 단위로만 봅니다', desc: `개별 응답은 담당자도 한 건씩 열어보지 않습니다. 응답이 ${PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 아예 산출하지 않습니다.` }
             ];
 
             return (
@@ -1620,8 +1354,8 @@
 
                     {/* 접수 후 무슨 일이 일어나는지 */}
                     <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-6 md:p-8">
-                        <h2 className="text-lg font-bold text-slate-800">웹 익명 접수는 이렇게 진행됩니다</h2>
-                        <p className="text-sm text-slate-500 mt-1 mb-6">접수하고 끝이 아니라, 진행 상황을 직접 확인하실 수 있습니다. (카카오톡 채널은 대화로 바로 주고받습니다)</p>
+                        <h2 className="text-lg font-bold text-slate-800">고충 접수는 이렇게 진행됩니다</h2>
+                        <p className="text-sm text-slate-500 mt-1 mb-6">사내 카카오톡 채널에서 담당자와 직접 주고받습니다.</p>
                         <ol className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-4 lg:gap-6">
                             {steps.map(st => (
                                 <li key={st.n} className="flex gap-3.5 lg:flex-col lg:gap-2.5">
@@ -1660,10 +1394,7 @@
                         </div>
                         <ul className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-8 lg:gap-y-3">
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">접수번호와 PIN 을 잃어버리면 조회할 수 없습니다.</span> PIN 은 암호화되어 저장되므로 관리자도 알려드릴 수 없습니다. 제출 직후 화면에서 꼭 복사해두세요.
-                            </li>
-                            <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">본문에 적으신 내용으로 신원이 드러날 수 있습니다.</span> 시스템은 신원을 수집하지 않지만, 날짜·부서·상황을 자세히 적으시면 내용만으로 특정될 수 있습니다. 필요한 만큼만 적어주세요.
+                                <span className="font-bold">게시판 글은 내용만으로 신원이 드러날 수 있습니다.</span> 시스템은 신원을 수집하지 않지만, 날짜·부서·상황을 자세히 적으시면 내용만으로 특정될 수 있습니다. 필요한 만큼만 적어주세요.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">게시판 글은 같은 브라우저에서만 삭제할 수 있습니다.</span> 익명 유지를 위해 작성자 정보를 저장하지 않기 때문입니다.
@@ -1672,7 +1403,7 @@
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">카카오톡 채널은 익명이 아닙니다.</span> 프로필 이름과 사진이 담당자에게 보입니다. 신원을 드러내기 어려운 사안은 웹 익명 접수를 이용해주세요.
+                                <span className="font-bold">카카오톡 채널은 익명이 아닙니다.</span> 프로필 이름과 사진이 담당자에게 보입니다. 이름을 밝히기 어려운 이야기는 대나무숲 게시판을 이용해주세요.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">조직 진단 결과는 팀 단위로만 공개됩니다.</span> 응답이 {PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 아예 산출하지 않습니다.
@@ -3615,7 +3346,7 @@
                         </div>
                         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                             {menu.map(item => (
-                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id || (item.id === 'complaint' && currentView === 'complaint-form') ? 'active' : 'text-slate-600'}`}>
+                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id ? 'active' : 'text-slate-600'}`}>
                                     <Icon name={item.icon} size={20} />
                                     {item.label}
                                 </button>
@@ -3684,7 +3415,7 @@
             useEffect(() => {
                 // 게시판은 양쪽이 같은 화면을 본다(관리자는 숨김 처리 권한만 더 갖는다).
                 const sharedViews = ['board'];
-                const employeeOnlyViews = ['guide', 'complaint', 'complaint-form', 'complaint-lookup', 'pulse-survey'];
+                const employeeOnlyViews = ['guide', 'complaint', 'complaint-lookup', 'pulse-survey'];
 
                 // 역할이 바뀌는 순간에는 그 역할의 첫 화면으로 보낸다.
                 // 게시판이 공용 화면이라, 이 처리가 없으면 관리자로 로그인해도
@@ -3798,8 +3529,7 @@
                         {role === 'employee' && currentView === 'guide' && <GuideView setView={setCurrentView} />}
                         {role === 'employee' && currentView === 'complaint' && <ComplaintIntakeView setView={setCurrentView} />}
                         {role === 'employee' && currentView === 'complaint-lookup' && <ComplaintLookupView />}
-                        {/* complaint-form 은 카카오톡 대신 익명으로 남기려는 사람이 들어오는 화면 */}
-                        {role === 'employee' && ['complaint-form', 'pulse-survey'].includes(currentView) && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
+                        {role === 'employee' && currentView === 'pulse-survey' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         
                         {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         {role === 'admin' && currentView === 'complaints' && <ComplaintManagementView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
