@@ -258,130 +258,12 @@
 
         const getFormattedPeriod = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
 
-        // ── 익명 접수 조회 ────────────────────────────────────────────
-        // 신원 정보를 받지 않는 대신, 접수번호 + 신고자가 정한 PIN 으로 본인 건을 찾는다.
-        // PIN 원문은 저장하지 않고 SHA-256 해시만 남긴다.
-        const LOOKUP_SALT = 'bambooforest-lookup-v1';
-
         // ── 고충 접수 창구 ────────────────────────────────────────────
         // 고충 접수는 사내 카카오톡 채널에서 운영한다. 웹 접수 양식은 두지 않는다.
         //
         // 카카오톡은 프로필이 그대로 보이는 '기명' 창구다. 이름을 밝히기 어려운
         // 이야기는 대나무숲 게시판이 받고, 두 창구의 차이를 화면에서 분명히 알린다.
         const KAKAO_CHANNEL_URL = 'https://pf.kakao.com/_kGxhxnX/chat';
-
-        // ── 접수번호 ──────────────────────────────────────────────────
-        // 예전 형식(GC-202602-410381)은 16자에 의미 없는 숫자라 외우기도, 받아
-        // 적기도 어려웠다. 앞의 'GC-202602-' 는 신고자에게 아무 정보도 주지 않는다.
-        // 대신 자연물 낱말 두 개와 네 자리 숫자를 쓴다. 눈으로 한 번 보면 남고,
-        // 전화로 불러주기도 쉽다. (예: 푸른대나무-7421)
-        //
-        // 조합 수는 24 × 24 × 10000 = 약 576만. 게다가 문서 ID 는 접수번호와
-        // PIN 을 함께 해시한 값이라, 실제로 겹치려면 둘 다 같아야 한다.
-        // 그래도 덮어쓰기를 원천 차단하려고 저장 직전에 빈자리인지 확인한다.
-        // 접수번호 앞머리는 회사명으로 고정한다. 어디서 온 번호인지 바로 알아보고,
-        // 사내 문서나 메일에 적어도 자연스럽다.
-        const CASE_PREFIX = '엔코스';
-
-        // 뒤 숫자는 다섯 자리를 쓴다. 네 자리(1만 가지)면 접수가 100건쯤 쌓였을 때
-        // 같은 번호가 두 건 나올 확률이 절반에 가까워, 관리자 목록에서 헷갈린다.
-        // 한 자리를 늘리면 10만 가지가 되어 그 위험이 10분의 1로 준다.
-        const CASE_DIGITS = 5;
-
-        const makeCaseNo = () => {
-            const buf = new Uint32Array(1);
-            window.crypto.getRandomValues(buf);
-            const max = 10 ** CASE_DIGITS;
-            return `${CASE_PREFIX}-${String(buf[0] % max).padStart(CASE_DIGITS, '0')}`;
-        };
-
-        // 하이픈을 빼거나 공백을 넣어 입력해도 찾을 수 있게 후보를 만든다.
-        // 기존 GC- 형식 접수번호의 해시가 달라지면 안 되므로, 정규화를 강제하지 않고
-        // 입력 원본을 먼저 시도한 뒤 변형을 덧붙인다.
-        const caseNoCandidates = (raw) => {
-            const trimmed = String(raw).trim();
-            const compact = trimmed.replace(/\s+/g, '');
-            const forms = [trimmed, compact];
-            const m = compact.match(/^([가-힣]+)-?(\d{4,6})$/);
-            if (m) forms.push(`${m[1]}-${m[2]}`);
-            return [...new Set(forms.filter(Boolean))];
-        };
-
-        const makeLookupHash = async (caseNo, pin) => {
-            if (!window.crypto?.subtle) {
-                // crypto.subtle 은 HTTPS(또는 localhost)에서만 동작한다.
-                throw new Error('보안 연결(HTTPS)에서만 조회 기능을 사용할 수 있습니다.');
-            }
-            const data = new TextEncoder().encode(`${LOOKUP_SALT}:${String(caseNo).trim().toUpperCase()}:${String(pin).trim()}`);
-            const buf = await window.crypto.subtle.digest('SHA-256', data);
-            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-        };
-
-        const appendThreadMessage = (caseData, by, text) => {
-            const thread = Array.isArray(caseData?.thread) ? caseData.thread : [];
-            return [...thread, { by, text: String(text).trim(), at: new Date().toISOString() }];
-        };
-
-        // 신고자가 마지막으로 말을 걸었고 아직 답이 없으면 '답변 대기' 상태로 본다.
-        const isAwaitingReply = (caseData) => {
-            const thread = Array.isArray(caseData?.thread) ? caseData.thread : [];
-            return thread.length > 0 && thread[thread.length - 1].by === 'reporter';
-        };
-
-        // 신고자 화면과 관리자 화면이 같은 대화를 쓰므로 컴포넌트를 공유한다.
-        const CaseThread = ({ thread, viewer, onSend, emptyText }) => {
-            const [draft, setDraft] = useState("");
-            const [sending, setSending] = useState(false);
-            const messages = Array.isArray(thread) ? thread : [];
-
-            const submit = async (e) => {
-                e.preventDefault();
-                const text = draft.trim();
-                if (!text || sending) return;
-                setSending(true);
-                try {
-                    await onSend(text);
-                    setDraft("");
-                } catch (err) {
-                    alert("전송 실패: " + err.message);
-                } finally {
-                    setSending(false);
-                }
-            };
-
-            return (
-                <div>
-                    <div className="space-y-2 max-h-[280px] overflow-y-auto mb-3">
-                        {messages.length === 0 ? (
-                            <p className="text-sm text-slate-500">{emptyText}</p>
-                        ) : messages.map((m, idx) => {
-                            const mine = m.by === viewer;
-                            return (
-                                <div key={`${m.at}-${idx}`} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[85%] rounded-xl px-3.5 py-2.5 border ${mine ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-700 border-slate-200'}`}>
-                                        <p className={`text-[11px] font-bold mb-1 ${mine ? 'text-white/80' : 'text-slate-400'}`}>
-                                            {m.by === 'admin' ? '담당자' : '신고자'} · {formatDateTime(m.at)}
-                                        </p>
-                                        <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{m.text}</p>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <form onSubmit={submit} className="flex gap-2">
-                        <input
-                            value={draft}
-                            onChange={e => setDraft(e.target.value)}
-                            placeholder={viewer === 'admin' ? '신고자에게 보낼 메시지…' : '담당자에게 보낼 메시지…'}
-                            className="flex-1 border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                        />
-                        <button type="submit" disabled={!draft.trim() || sending} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                            {sending ? '전송 중' : '보내기'}
-                        </button>
-                    </form>
-                </div>
-            );
-        };
 
         const PULSE_FIELDS = [
             { id: 'workload', label: '업무부하', desc: '업무량과 마감이 감당 가능한 수준입니다.', category: 'env' },
@@ -723,33 +605,10 @@
             );
         };
 
-        const COMPLAINT_CATEGORIES = [
-            { value: "workload", label: "업무량/근로시간" },
-            { value: "leadership", label: "상급자/리더십" },
-            { value: "relationship", label: "동료관계/조직문화" },
-            { value: "harassment", label: "직장 내 괴롭힘 의심" },
-            { value: "sexual", label: "성희롱/차별 가능성" },
-            { value: "safety", label: "안전/건강 위험" },
-            { value: "pay", label: "임금/보상/평가" },
-            { value: "other", label: "기타" }
-        ];
-
-        const URGENCY_OPTIONS = [
-            { value: "low", label: "낮음" },
-            { value: "normal", label: "보통" },
-            { value: "high", label: "높음" },
-            { value: "critical", label: "긴급" }
-        ];
-
-        const CASE_STATUS_OPTIONS = ["접수", "검토중", "조사중", "조치중", "종결", "보류"];
-
         const getTeamName = (teamStats, teamId) => {
             const team = (teamStats || []).find(t => t.id === teamId);
             return team ? team.name : "미지정";
         };
-
-        const getCategoryLabel = (value) => COMPLAINT_CATEGORIES.find(c => c.value === value)?.label || value || "-";
-        const getUrgencyLabel = (value) => URGENCY_OPTIONS.find(u => u.value === value)?.label || value || "-";
 
         const formatDateTime = (value) => {
             if (!value) return "-";
@@ -760,42 +619,6 @@
                 if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
             }
             return String(value);
-        };
-
-        const assessComplaintRisk = (data) => {
-            const flags = [];
-            let score = 0;
-            if (["harassment", "sexual", "safety"].includes(data.category)) {
-                score += 35;
-                flags.push("법정/보호조치 검토 필요");
-            }
-            if (data.urgency === "critical") {
-                score += 35;
-                flags.push("긴급 대응");
-            } else if (data.urgency === "high") {
-                score += 20;
-                flags.push("우선 검토");
-            }
-            if (data.protectionRequest === "yes") {
-                score += 25;
-                flags.push("보호조치 요청");
-            }
-            if (String(data.details || "").length >= 300) {
-                score += 5;
-                flags.push("상세 진술");
-            }
-            const riskLevel = score >= 70 ? "high" : score >= 35 ? "medium" : "low";
-            return { riskScore: score, riskLevel, riskFlags: flags };
-        };
-
-        const RiskBadge = ({ level }) => {
-            const map = {
-                high: "bg-red-600 text-white border-red-600 shadow-sm",
-                medium: "bg-amber-100 text-amber-700 border-amber-200",
-                low: "bg-green-100 text-green-700 border-green-200"
-            };
-            const label = level === "high" ? "높음" : level === "medium" ? "보통" : "낮음";
-            return <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${map[level] || map.low}`}>리스크 {label}</span>;
         };
 
         // 고충 접수는 사내 카카오톡 채널이 맡으므로 이 화면은 조직 진단만 담당한다.
@@ -1004,174 +827,6 @@
             );
         };
 
-        // 익명 신고자가 접수번호 + PIN 으로 본인 건을 열어보는 화면.
-        // 내부 판단 자료(관리 메모·리스크 점수)는 노출하지 않고, 상태·결과·대화만 보여준다.
-        const ComplaintLookupView = () => {
-            const [caseNoInput, setCaseNoInput] = useState("");
-            const [pinInput, setPinInput] = useState("");
-            const [checking, setChecking] = useState(false);
-            const [error, setError] = useState("");
-            const [foundId, setFoundId] = useState(null);
-            const [caseData, setCaseData] = useState(null);
-
-            // 조회에 성공하면 해당 문서를 구독해, 담당자 답변이 실시간으로 들어온다.
-            useEffect(() => {
-                if (!foundId || !window.db) return;
-                const ref = window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', foundId);
-                return window.firestore.onSnapshot(ref, (snap) => {
-                    if (snap.exists()) setCaseData({ id: snap.id, ...snap.data() });
-                });
-            }, [foundId]);
-
-            const handleLookup = async (e) => {
-                e.preventDefault();
-                setError("");
-                if (!caseNoInput.trim()) return setError("접수번호를 입력해주세요.");
-                if (!/^[0-9]{4,8}$/.test(pinInput)) return setError("PIN 을 숫자 4~8자리로 입력해주세요.");
-
-                setChecking(true);
-                try {
-                    // 해시가 곧 문서 ID 다. 목록을 훑지 않고 한 건만 직접 읽으므로,
-                    // 보안 규칙에서 이 컬렉션의 list 권한을 관리자에게만 줄 수 있다.
-                    // 하이픈이나 공백을 다르게 입력해도 찾히도록 몇 가지 형태를 시도한다.
-                    let snap = null, hash = null;
-                    for (const form of caseNoCandidates(caseNoInput)) {
-                        hash = await makeLookupHash(form, pinInput);
-                        const found = await window.firestore.getDoc(
-                            window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', hash)
-                        );
-                        if (found.exists()) { snap = found; break; }
-                    }
-                    if (!snap) {
-                        // 어느 쪽이 틀렸는지 알려주지 않는다 (접수번호 대입 공격 방지).
-                        setError("일치하는 접수 건이 없습니다. 접수번호와 PIN 을 다시 확인해주세요.");
-                        setFoundId(null);
-                        setCaseData(null);
-                    } else {
-                        setCaseData({ id: hash, ...snap.data() });
-                        setFoundId(hash);
-                    }
-                } catch (err) {
-                    setError(err.message || "조회 중 오류가 발생했습니다.");
-                } finally {
-                    setChecking(false);
-                }
-            };
-
-            const sendMessage = async (text) => {
-                if (!caseData) return;
-                await window.firestore.updateDoc(
-                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', caseData.id),
-                    { thread: appendThreadMessage(caseData, 'reporter', text), updatedAt: window.firestore.serverTimestamp() }
-                );
-            };
-
-            const reset = () => { setFoundId(null); setCaseData(null); setCaseNoInput(""); setPinInput(""); setError(""); };
-
-            if (caseData) {
-                const statusTone = caseData.status === "종결" ? "bg-green-100 text-green-700 border-green-200"
-                    : caseData.status === "보류" ? "bg-slate-100 text-slate-700 border-slate-200"
-                    : "bg-amber-100 text-amber-800 border-amber-200";
-                return (
-                    <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
-                        <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-4 md:p-8">
-                            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                                <div className="min-w-0">
-                                    <p className="text-xs font-bold text-slate-500">{caseData.caseNo}</p>
-                                    <h1 className="text-xl md:text-2xl font-bold text-slate-800 mt-1 break-words">{caseData.subject}</h1>
-                                    <p className="text-sm text-slate-500 mt-1">
-                                        {getCategoryLabel(caseData.category)} · 긴급도 {getUrgencyLabel(caseData.urgency)} · 접수 {formatDateTime(caseData.createdAt)}
-                                    </p>
-                                </div>
-                                <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${statusTone}`}>{caseData.status || "접수"}</span>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">담당자</p>
-                                    <p className="text-sm font-bold text-slate-800">{caseData.handler || "배정 전"}</p>
-                                </div>
-                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">최근 업데이트</p>
-                                    <p className="text-sm font-bold text-slate-800">{formatDateTime(caseData.updatedAt) }</p>
-                                </div>
-                            </div>
-
-                            <div className="mb-6">
-                                <h3 className="font-bold text-slate-800 mb-2">처리 결과</h3>
-                                {caseData.outcome ? (
-                                    <div className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed bg-brand-50 border border-brand-100 rounded-xl p-4">{caseData.outcome}</div>
-                                ) : (
-                                    <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">아직 처리 결과가 등록되지 않았습니다. 확인 후 이곳에 안내드립니다.</p>
-                                )}
-                            </div>
-
-                            <div className="border-t border-slate-200 pt-5">
-                                <h3 className="font-bold text-slate-800 mb-1">담당자와의 대화</h3>
-                                <p className="text-xs text-slate-500 mb-3">익명이 유지된 채로 담당자와 이야기할 수 있습니다. 추가로 확인이 필요한 내용이 있으면 여기로 질문이 옵니다.</p>
-                                <CaseThread
-                                    thread={caseData.thread}
-                                    viewer="reporter"
-                                    onSend={sendMessage}
-                                    emptyText="아직 오간 메시지가 없습니다. 궁금한 점을 남겨주세요."
-                                />
-                            </div>
-                        </div>
-                        <button onClick={reset} className="text-sm text-slate-500 hover:text-brand-600 font-bold">← 다른 접수 건 조회하기</button>
-                    </div>
-                );
-            }
-
-            return (
-                <div className="max-w-lg mx-auto animate-fade-in my-4 md:my-8">
-                    <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-6 md:p-8">
-                        <div className="w-12 h-12 bg-brand-50 border border-brand-100 rounded-full flex items-center justify-center mb-4">
-                            <Icon name="search" size={22} className="text-brand-600" />
-                        </div>
-                        <h1 className="text-xl md:text-2xl font-bold text-slate-800">내 접수 조회</h1>
-                        <p className="text-sm text-slate-500 mt-2 mb-6 leading-relaxed">
-                            접수 시 받으신 <span className="font-bold text-slate-700">접수번호</span> 와 직접 정하신 <span className="font-bold text-slate-700">PIN</span> 을 입력하시면
-                            처리 상태와 담당자 답변을 확인하실 수 있습니다. 익명 접수도 신원 확인 없이 그대로 조회됩니다.
-                        </p>
-
-                        <form onSubmit={handleLookup} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">접수번호</label>
-                                <input
-                                    value={caseNoInput}
-                                    onChange={e => setCaseNoInput(e.target.value)}
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white font-semibold focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                                    placeholder="예: 엔코스-73152"
-                                    autoFocus
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">조회 PIN</label>
-                                <input
-                                    type="password"
-                                    inputMode="numeric"
-                                    maxLength={8}
-                                    value={pinInput}
-                                    onChange={e => setPinInput(e.target.value.replace(/[^0-9]/g, ""))}
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-center tracking-[0.4em] focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
-                                    placeholder="숫자 4~8자리"
-                                />
-                            </div>
-                            {error && <p className="text-sm text-red-700 font-medium bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
-                            <button type="submit" disabled={checking} className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 shadow-brand transition-colors disabled:opacity-50">
-                                {checking ? "조회 중…" : "조회하기"}
-                            </button>
-                        </form>
-
-                        <p className="text-xs text-slate-400 mt-5 leading-relaxed">
-                            PIN 은 암호화되어 저장되므로 관리자도 확인하거나 재발급할 수 없습니다.
-                            분실하신 경우 번거로우시더라도 새로 접수해주세요.
-                        </p>
-                    </div>
-                </div>
-            );
-        };
-
         // ── 안내 페이지 (구성원 첫 화면) ────────────────────────────
         // 익명 제보 도구는 "내가 쓴 게 누구에게 어디까지 보이는지" 를 이해시키지
         // 못하면 아무도 쓰지 않는다. 특히 이 서비스는 성격이 정반대인 창구
@@ -1210,9 +865,6 @@
                                className="bg-[#FEE500] text-[#3C1E1E] px-5 py-3 rounded-xl text-sm font-bold hover:brightness-95 transition-all flex items-center gap-2 border border-yellow-300">
                                 <Icon name="message-circle" size={16} /> 카카오톡 채널로 접수하기
                             </a>
-                            <button onClick={() => setView('complaint-lookup')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
-                                <Icon name="search" size={16} /> 내 접수 조회
-                            </button>
                         </div>
                     </div>
 
@@ -1310,9 +962,6 @@
                             </button>
                             <button onClick={() => setView('complaint')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
                                 <Icon name="shield" size={16} /> 고충 접수 안내
-                            </button>
-                            <button onClick={() => setView('complaint-lookup')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
-                                <Icon name="search" size={16} /> 내 접수 조회
                             </button>
                         </div>
                     </div>
@@ -2657,388 +2306,6 @@
             );
         };
 
-        const ComplaintManagementView = ({ teamStats, currentPeriod, user }) => {
-            const [cases, setCases] = useState([]);
-            const [loading, setLoading] = useState(true);
-            const [statusFilter, setStatusFilter] = useState("전체");
-            const [riskFilter, setRiskFilter] = useState("전체");
-            const [search, setSearch] = useState("");
-            const [selectedCase, setSelectedCase] = useState(null);
-            const [detailDraft, setDetailDraft] = useState({ status: "접수", handler: "", adminMemo: "", outcome: "" });
-
-            useEffect(() => {
-                if (!window.db) return;
-                setLoading(true);
-                const q = window.firestore.query(
-                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases')
-                );
-                const unsubscribe = window.firestore.onSnapshot(q, (snapshot) => {
-                    const list = snapshot.docs
-                        .map(doc => {
-                            const rawData = doc.data();
-                            return {
-                                id: doc.id,
-                                ...rawData,
-                                teamName: rawData.teamNameSnapshot || getTeamName(teamStats, rawData.teamId),
-                                createdAtSeconds: rawData.createdAt ? rawData.createdAt.seconds : 0
-                            };
-                        })
-                        .filter(item => item.period === currentPeriod);
-                    list.sort((a, b) => b.createdAtSeconds - a.createdAtSeconds);
-                    setCases(list);
-                    setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching complaint cases:", error);
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, [currentPeriod, teamStats]);
-
-            // 상세 모달을 열어둔 사이에 신고자가 메시지를 보내면 바로 보이도록,
-            // 실시간 목록에서 해당 건의 대화만 따라간다. (입력 중인 detailDraft 는 건드리지 않는다)
-            useEffect(() => {
-                if (!selectedCase) return;
-                const live = cases.find(c => c.id === selectedCase.id);
-                if (!live) return;
-                const liveLen = (live.thread || []).length;
-                const shownLen = (selectedCase.thread || []).length;
-                if (liveLen !== shownLen) setSelectedCase(prev => ({ ...prev, thread: live.thread || [] }));
-            }, [cases, selectedCase]);
-
-            const openCase = (item) => {
-                setSelectedCase(item);
-                setDetailDraft({
-                    status: item.status || "접수",
-                    handler: item.handler || "",
-                    adminMemo: item.adminMemo || "",
-                    outcome: item.outcome || ""
-                });
-            };
-
-            const filteredCases = useMemo(() => {
-                const keyword = search.trim().toLowerCase();
-                return cases.filter(item => {
-                    if (statusFilter !== "전체" && item.status !== statusFilter) return false;
-                    if (riskFilter !== "전체" && item.riskLevel !== riskFilter) return false;
-                    if (!keyword) return true;
-                    const haystack = [
-                        item.caseNo,
-                        item.subject,
-                        item.details,
-                        item.teamName,
-                        getCategoryLabel(item.category),
-                        item.relatedParty,
-                        item.handler
-                    ].join(" ").toLowerCase();
-                    return haystack.includes(keyword);
-                });
-            }, [cases, statusFilter, riskFilter, search]);
-
-            const stats = useMemo(() => ({
-                total: cases.length,
-                open: cases.filter(c => c.status !== "종결").length,
-                high: cases.filter(c => c.riskLevel === "high").length,
-                protection: cases.filter(c => c.protectionRequest === "yes").length
-            }), [cases]);
-
-            const appendHistory = (item, action, note) => {
-                const history = Array.isArray(item.history) ? item.history : [];
-                return [
-                    ...history,
-                    {
-                        at: new Date().toISOString(),
-                        actor: "관리자",
-                        action,
-                        note: note || "",
-                        uid: user?.uid || ""
-                    }
-                ];
-            };
-
-            const saveCase = async () => {
-                if (!selectedCase) return;
-                const statusChanged = detailDraft.status !== selectedCase.status;
-                const history = appendHistory(
-                    selectedCase,
-                    statusChanged ? `상태 변경: ${selectedCase.status || "접수"} → ${detailDraft.status}` : "상세 내용 저장",
-                    statusChanged ? "처리 상태 업데이트" : "담당자/메모/결과 업데이트"
-                );
-                const patch = {
-                    status: detailDraft.status,
-                    handler: detailDraft.handler,
-                    adminMemo: detailDraft.adminMemo,
-                    outcome: detailDraft.outcome,
-                    history,
-                    updatedAt: window.firestore.serverTimestamp()
-                };
-                await window.firestore.updateDoc(
-                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', selectedCase.id),
-                    patch
-                );
-                setSelectedCase({ ...selectedCase, ...patch });
-                alert("저장되었습니다.");
-            };
-
-            const sendReply = async (text) => {
-                if (!selectedCase) return;
-                const thread = appendThreadMessage(selectedCase, 'admin', text);
-                await window.firestore.updateDoc(
-                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', selectedCase.id),
-                    { thread, updatedAt: window.firestore.serverTimestamp() }
-                );
-                setSelectedCase({ ...selectedCase, thread });
-            };
-
-            const quickStatus = async (item, nextStatus) => {
-                const history = appendHistory(item, `상태 변경: ${item.status || "접수"} → ${nextStatus}`, "목록에서 빠른 변경");
-                await window.firestore.updateDoc(
-                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', item.id),
-                    { status: nextStatus, history, updatedAt: window.firestore.serverTimestamp() }
-                );
-            };
-
-            const deleteCase = async (item) => {
-                if (!confirm(`${item.caseNo || "선택 건"}을 삭제하시겠습니까? 삭제된 접수 건은 복구할 수 없습니다.`)) return;
-                await window.firestore.deleteDoc(
-                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'complaint_cases', item.id)
-                );
-                if (selectedCase?.id === item.id) setSelectedCase(null);
-            };
-
-            const statusTone = (status) => {
-                if (status === "종결") return "bg-green-100 text-green-700 border-green-200";
-                if (status === "조사중" || status === "조치중") return "bg-brand-100 text-brand-700 border-brand-200";
-                if (status === "보류") return "bg-slate-100 text-slate-600 border-slate-200";
-                return "bg-amber-100 text-amber-700 border-amber-200";
-            };
-
-            return (
-                <div className="space-y-6 fade-in">
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    <Icon name="inbox" className="text-brand-600"/> 고충 처리함
-                                </h2>
-                                <p className="text-sm text-slate-500 mt-2">기준 기간: <span className="font-bold text-slate-700">{currentPeriod}</span></p>
-                            </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:min-w-[520px]">
-                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                                    <p className="text-xs text-slate-500 font-bold">전체</p>
-                                    <p className="text-2xl font-black text-slate-800">{stats.total}</p>
-                                </div>
-                                <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                                    <p className="text-xs text-amber-600 font-bold">미종결</p>
-                                    <p className="text-2xl font-black text-amber-700">{stats.open}</p>
-                                </div>
-                                <div className="bg-red-50 border border-red-100 rounded-xl p-3">
-                                    <p className="text-xs text-red-600 font-bold">고위험</p>
-                                    <p className="text-2xl font-black text-red-700">{stats.high}</p>
-                                </div>
-                                {/* 옆의 '고위험'(채운 레드)과 구분되도록 테두리형으로 둔다. */}
-                                <div className="bg-white border border-brand-300 rounded-xl p-3">
-                                    <p className="text-xs text-brand-600 font-bold">보호요청</p>
-                                    <p className="text-2xl font-black text-brand-700">{stats.protection}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="접수번호, 제목, 부서 검색" className="md:col-span-2 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100" />
-                            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
-                                <option value="전체">상태 전체</option>
-                                {CASE_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
-                            </select>
-                            <select value={riskFilter} onChange={e => setRiskFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
-                                <option value="전체">리스크 전체</option>
-                                <option value="high">높음</option>
-                                <option value="medium">보통</option>
-                                <option value="low">낮음</option>
-                            </select>
-                        </div>
-
-                        <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                            <table className="w-full text-sm text-left">
-                                <thead className="bg-slate-50 text-slate-600">
-                                    <tr>
-                                        <th className="p-3 border-b">접수번호</th>
-                                        <th className="p-3 border-b">제목</th>
-                                        <th className="p-3 border-b">부서</th>
-                                        <th className="p-3 border-b">유형</th>
-                                        <th className="p-3 border-b">리스크</th>
-                                        <th className="p-3 border-b">상태</th>
-                                        <th className="p-3 border-b">접수일</th>
-                                        <th className="p-3 border-b text-center">관리</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {loading ? (
-                                        <tr><td colSpan="8" className="p-8 text-center text-slate-500">접수 건을 불러오는 중...</td></tr>
-                                    ) : filteredCases.length === 0 ? (
-                                        <tr><td colSpan="8" className="p-8 text-center text-slate-500">조건에 맞는 접수 건이 없습니다.</td></tr>
-                                    ) : (
-                                        filteredCases.map(item => (
-                                            <tr key={item.id} className="hover:bg-slate-50">
-                                                <td className="p-3 text-xs font-bold text-slate-600 whitespace-nowrap">{item.caseNo || item.id.slice(0, 8)}</td>
-                                                <td className="p-3 min-w-[220px]">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                        <button onClick={() => openCase(item)} className="font-bold text-slate-800 hover:text-brand-700 text-left">{item.subject || "-"}</button>
-                                                        {/* 신고자가 마지막으로 메시지를 남긴 건은 놓치지 않도록 표시한다. */}
-                                                        {isAwaitingReply(item) && (
-                                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white whitespace-nowrap">답변 대기</span>
-                                                        )}
-                                                    </div>
-                                                    <p className="text-xs text-slate-400 mt-1 line-clamp-1">{item.details}</p>
-                                                </td>
-                                                <td className="p-3 whitespace-nowrap">{item.teamName}</td>
-                                                <td className="p-3 whitespace-nowrap">{getCategoryLabel(item.category)}</td>
-                                                <td className="p-3 whitespace-nowrap"><RiskBadge level={item.riskLevel} /></td>
-                                                <td className="p-3 whitespace-nowrap">
-                                                    <select value={item.status || "접수"} onChange={e => quickStatus(item, e.target.value)} className={`border rounded-lg px-2 py-1 text-xs font-bold ${statusTone(item.status)}`}>
-                                                        {CASE_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
-                                                    </select>
-                                                </td>
-                                                <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{formatDateTime(item.createdAt)}</td>
-                                                <td className="p-3 text-center whitespace-nowrap">
-                                                    <button onClick={() => openCase(item)} className="text-brand-600 hover:bg-brand-50 p-1.5 rounded" title="상세 보기"><Icon name="eye" size={16} /></button>
-                                                    <button onClick={() => deleteCase(item)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded" title="삭제"><Icon name="trash-2" size={16} /></button>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    {selectedCase && (
-                        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[100] p-4 fade-in backdrop-blur-sm">
-                            <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[92vh] overflow-hidden border border-slate-200 flex flex-col">
-                                <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-4">
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                                            <span className="text-xs font-bold text-slate-600">{selectedCase.caseNo}</span>
-                                            <RiskBadge level={selectedCase.riskLevel} />
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusTone(detailDraft.status)}`}>{detailDraft.status}</span>
-                                        </div>
-                                        <h3 className="text-lg font-bold text-slate-900">{selectedCase.subject}</h3>
-                                        <p className="text-sm text-slate-500 mt-1">{selectedCase.teamName} · {getCategoryLabel(selectedCase.category)} · 긴급도 {getUrgencyLabel(selectedCase.urgency)}</p>
-                                    </div>
-                                    <button onClick={() => setSelectedCase(null)} className="text-slate-400 hover:text-slate-700"><Icon name="x" size={22} /></button>
-                                </div>
-
-                                <div className="grid grid-cols-1 lg:grid-cols-5 gap-0 overflow-y-auto">
-                                    <div className="lg:col-span-3 p-5 space-y-5 border-r border-slate-100">
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                                            <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-400">접수방식</p><p className="font-bold text-slate-800">{selectedCase.reporterMode === "named" ? "기명" : "익명"}</p></div>
-                                            <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-400">발생일</p><p className="font-bold text-slate-800">{selectedCase.incidentDate || "-"}</p></div>
-                                            <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-400">보호요청</p><p className="font-bold text-slate-800">{selectedCase.protectionRequest === "yes" ? "요청" : "없음"}</p></div>
-                                            <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-400">연락동의</p><p className="font-bold text-slate-800">{selectedCase.allowContact === "yes" ? "동의" : "미동의"}</p></div>
-                                        </div>
-
-                                        {selectedCase.reporterMode === "named" && (
-                                            <div className="bg-brand-50 border border-brand-100 rounded-xl p-4">
-                                                <h4 className="font-bold text-brand-800 text-sm mb-2">신고자 정보</h4>
-                                                <p className="text-sm text-slate-800">성명: {selectedCase.reporterName || "-"} · 연락처: {selectedCase.contact || "-"}</p>
-                                            </div>
-                                        )}
-
-                                        <div>
-                                            <h4 className="font-bold text-slate-800 mb-2">상세 내용</h4>
-                                            <div className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed bg-slate-50 border border-slate-100 rounded-xl p-4 min-h-[150px]">{selectedCase.details}</div>
-                                        </div>
-
-                                        <div>
-                                            <h4 className="font-bold text-slate-800 mb-2">희망 조치</h4>
-                                            <div className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed bg-slate-50 border border-slate-100 rounded-xl p-4">{selectedCase.desiredAction || "-"}</div>
-                                        </div>
-
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div>
-                                                <h4 className="font-bold text-slate-800 mb-2">관련자/관련부서</h4>
-                                                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-4">{selectedCase.relatedParty || "-"}</p>
-                                            </div>
-                                            <div>
-                                                <h4 className="font-bold text-slate-800 mb-2">리스크 플래그</h4>
-                                                <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 min-h-[54px]">
-                                                    {(selectedCase.riskFlags || []).length === 0 ? (
-                                                        <p className="text-sm text-slate-500">특이 플래그 없음</p>
-                                                    ) : (
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {selectedCase.riskFlags.map(flag => <span key={flag} className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-100">{flag}</span>)}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="lg:col-span-2 p-5 space-y-4 bg-slate-50">
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-1">처리 상태</label>
-                                            <select value={detailDraft.status} onChange={e => setDetailDraft({...detailDraft, status: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
-                                                {CASE_STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-1">담당자/담당부서</label>
-                                            <input value={detailDraft.handler} onChange={e => setDetailDraft({...detailDraft, handler: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white" placeholder="예: 인사팀 홍길동" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-1">관리 메모</label>
-                                            <textarea value={detailDraft.adminMemo} onChange={e => setDetailDraft({...detailDraft, adminMemo: e.target.value})} rows="5" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white resize-none" placeholder="초기 검토, 조사 필요사항, 보완자료 등을 기록" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-1">처리 결과</label>
-                                            <textarea value={detailDraft.outcome} onChange={e => setDetailDraft({...detailDraft, outcome: e.target.value})} rows="5" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white resize-none" placeholder="조치 내용, 통보 여부, 후속관리 기준" />
-                                        </div>
-                                        <button onClick={saveCase} className="w-full bg-brand-600 text-white py-3 rounded-lg font-bold hover:bg-brand-700">저장</button>
-
-                                        <div className="border-t border-slate-200 pt-4">
-                                            <div className="flex items-center justify-between mb-1">
-                                                <h4 className="font-bold text-slate-800">신고자와의 대화</h4>
-                                                {isAwaitingReply(selectedCase) && (
-                                                    <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">답변 대기</span>
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-slate-500 mb-3">
-                                                {selectedCase.reporterMode === "named"
-                                                    ? "접수번호와 PIN 으로 접속한 신고자에게 전달됩니다."
-                                                    : "익명 신고자에게 신원 노출 없이 전달됩니다. 조사에 필요한 내용을 여기서 확인하세요."}
-                                            </p>
-                                            <CaseThread
-                                                thread={selectedCase.thread}
-                                                viewer="admin"
-                                                onSend={sendReply}
-                                                emptyText="아직 오간 메시지가 없습니다."
-                                            />
-                                        </div>
-
-                                        <div className="border-t border-slate-200 pt-4">
-                                            <h4 className="font-bold text-slate-800 mb-3">처리 이력</h4>
-                                            <div className="space-y-2 max-h-[220px] overflow-y-auto">
-                                                {(selectedCase.history || []).length === 0 ? (
-                                                    <p className="text-sm text-slate-500">처리 이력이 없습니다.</p>
-                                                ) : (
-                                                    selectedCase.history.slice().reverse().map((h, idx) => (
-                                                        <div key={`${h.at}-${idx}`} className="bg-white border border-slate-200 rounded-lg p-3">
-                                                            <p className="text-xs font-bold text-slate-700">{h.action}</p>
-                                                            <p className="text-[11px] text-slate-400 mt-1">{formatDateTime(h.at)} · {h.actor}</p>
-                                                            {h.note && <p className="text-xs text-slate-500 mt-1">{h.note}</p>}
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
         const TeamManagementView = ({ teamStats, currentPeriod }) => {
             const [formData, setFormData] = useState({ name: '', workload: '적정', conflict: '낮음', leadership: '보통', status: '양호', keywords: [] });
             const [isEditing, setIsEditing] = useState(null);
@@ -3296,7 +2563,6 @@
         const Sidebar = ({ currentView, setView, role, isMobileMenuOpen, setIsMobileMenuOpen }) => {
             const adminMenu = [
                 { id: 'dashboard', label: '대시보드', icon: 'layout-dashboard' },
-                { id: 'complaints', label: '고충 처리함', icon: 'inbox' },
                 { id: 'board', label: '대나무숲 게시판', icon: 'users' },
                 { id: 'pulse', label: '조직진단 현황', icon: 'bar-chart-2' },
                 { id: 'teams', label: '팀/조직 관리', icon: 'users' },
@@ -3311,8 +2577,7 @@
                 { id: 'board', label: '대나무숲 게시판', icon: 'message-square' },
                 { id: 'guide', label: '이용 안내', icon: 'info' },
                 { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' },
-                { id: 'complaint', label: '고충 접수', icon: 'shield' },
-                { id: 'complaint-lookup', label: '내 접수 조회', icon: 'search' }
+                { id: 'complaint', label: '고충 접수', icon: 'shield' }
             ];
             const menu = role === 'admin' ? adminMenu : empMenu;
             
@@ -3415,7 +2680,7 @@
             useEffect(() => {
                 // 게시판은 양쪽이 같은 화면을 본다(관리자는 숨김 처리 권한만 더 갖는다).
                 const sharedViews = ['board'];
-                const employeeOnlyViews = ['guide', 'complaint', 'complaint-lookup', 'pulse-survey'];
+                const employeeOnlyViews = ['guide', 'complaint', 'pulse-survey'];
 
                 // 역할이 바뀌는 순간에는 그 역할의 첫 화면으로 보낸다.
                 // 게시판이 공용 화면이라, 이 처리가 없으면 관리자로 로그인해도
@@ -3503,7 +2768,7 @@
                                 <div>
                                     <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5">
                                         <span className="hidden md:inline-block w-1 h-6 rounded-full bg-brand-600"></span>
-                                        {currentView === 'board' ? '대나무숲 게시판' : role === 'employee' ? (currentView === 'guide' ? '이용 안내' : currentView === 'pulse-survey' ? '조직 진단' : currentView === 'complaint-lookup' ? '내 접수 조회' : '고충 접수') : 'HR 관리자 콘솔'}
+                                        {currentView === 'board' ? '대나무숲 게시판' : role === 'employee' ? (currentView === 'guide' ? '이용 안내' : currentView === 'pulse-survey' ? '조직 진단' : '고충 접수') : 'HR 관리자 콘솔'}
                                     </h1>
                                     {/* 게시판은 기간과 무관한 화면이라 조회 기간 선택을 숨긴다. */}
                                     {role === 'admin' && currentView !== 'board' && (
@@ -3528,11 +2793,9 @@
 
                         {role === 'employee' && currentView === 'guide' && <GuideView setView={setCurrentView} />}
                         {role === 'employee' && currentView === 'complaint' && <ComplaintIntakeView setView={setCurrentView} />}
-                        {role === 'employee' && currentView === 'complaint-lookup' && <ComplaintLookupView />}
                         {role === 'employee' && currentView === 'pulse-survey' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         
                         {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
-                        {role === 'admin' && currentView === 'complaints' && <ComplaintManagementView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         {role === 'admin' && currentView === 'pulse' && <PulseInsightView teamStats={teamStats} currentPeriod={currentPeriod} />}
                         {role === 'admin' && currentView === 'teams' && <TeamManagementView teamStats={teamStats} currentPeriod={currentPeriod} />}
                         {role === 'admin' && currentView === 'analysis' && <AnalysisView teamStats={teamStats} globalMetrics={globalMetrics} chartData={chartData} currentPeriod={currentPeriod} aiConfig={aiConfig} />}

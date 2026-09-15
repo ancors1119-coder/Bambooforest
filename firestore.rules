@@ -33,11 +33,11 @@ service cloud.firestore {
 
     match /artifacts/{appId}/public/data/{collection}/{docId} {
 
-      // ── 고충 접수 ─────────────────────────────────────────────
-      // 목록 조회는 관리자만. 신고자는 접수번호 + PIN 으로 만든 해시가
-      // 곧 문서 ID 라서, ID 를 아는 본인만 한 건을 직접 읽을 수 있다.
-      // (해시가 SHA-256 이라 ID 를 찍어서 맞히는 것은 불가능하다)
-      function isComplaint() { return collection == 'complaint_cases'; }
+      // ── 고충 접수(과거 데이터) ────────────────────────────────
+      // 고충 접수는 사내 카카오톡 채널로 옮겨갔고 앱에는 접수·조회 화면이 없다.
+      // 남아 있는 과거 건(complaint_cases)은 보존 대상이라 지우지 않지만,
+      // 아래 어떤 규칙에도 이름이 나오지 않는다. 관리자는 isAdmin() 으로
+      // 닿고, 그 외에는 기본 거부가 그대로 적용된다.
 
       // ── 조직 진단 응답 ────────────────────────────────────────
       // 익명 응답이므로 개별 열람 경로가 없다. 관리자만 읽는다.
@@ -59,32 +59,25 @@ service cloud.firestore {
 
       // ── 읽기 ──────────────────────────────────────────────────
       allow get: if isAdmin()
-                 || isComplaint()      // 문서 ID(=해시)를 아는 본인만 도달 가능
                  || isBoard()
                  || isStats();
 
       allow list: if isAdmin()
                   || isBoard()
                   || isStats();
-      // isComplaint / isSurvey / isSecret 은 list 에서 빠진다.
+      // 고충 접수 / 진단 응답 / AI 설정 은 읽기에서 전부 빠진다.
       // 목록을 훑는 순간 전체가 노출되므로 관리자에게만 남긴다.
 
       // ── 쓰기 ──────────────────────────────────────────────────
-      // 접수·응답·게시글 작성은 익명 사용자도 할 수 있어야 한다.
+      // 진단 응답과 게시글 작성은 익명 사용자도 할 수 있어야 한다.
       allow create: if isAdmin()
-                    || ((isComplaint() || isSurvey() || isBoard()) && signedIn());
+                    || ((isSurvey() || isBoard()) && signedIn());
 
-      // 수정: 신고자↔담당자 대화, 게시판 공감·신고 때문에 익명에게도 필요하다.
-      // 다만 고충 건에서 익명 사용자가 바꿀 수 있는 것은 대화뿐이다.
-      // (처리 상태·담당자·관리 메모·리스크 평가는 관리자만 손댈 수 있다)
-      //
-      // 게시판도 마찬가지로 '반응'만 열어둔다. hidden 과 blindCleared 는
-      // 블라인드를 켜고 끄는 스위치라, 열어두면 신고당한 사람이 직접 해제해
-      // 신고 기능 자체가 무의미해진다. 관리자만 손댈 수 있다.
+      // 수정: 게시판 공감·댓글수·신고 때문에 익명에게도 필요하다.
+      // 다만 '반응' 필드만 열어둔다. hidden 과 blindCleared 는 블라인드를
+      // 켜고 끄는 스위치라, 열어두면 신고당한 사람이 직접 해제해 신고 기능
+      // 자체가 무의미해진다. 관리자만 손댈 수 있다.
       allow update: if isAdmin()
-                    || (isComplaint() && signedIn()
-                        && request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly(['thread', 'updatedAt']))
                     || (isBoard() && signedIn()
                         && request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly(['likedBy', 'likeCount', 'commentCount', 'reportedBy']));
