@@ -1920,7 +1920,7 @@
                 const post = posts.find(x => x.id === comment.postId);
                 if (post) {
                     await window.firestore.updateDoc(ref('board_posts', post.id), {
-                        commentCount: Math.max(0, (post.commentCount || 0) - 1)
+                        commentCount: window.firestore.increment(-1)
                     });
                 }
             };
