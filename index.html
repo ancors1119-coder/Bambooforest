@@ -75,7 +75,7 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit, increment, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -92,7 +92,7 @@
             const app = initializeApp(firebaseConfig);
             window.db = getFirestore(app);
             window.auth = getAuth(app);
-            window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit };
+            window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit, increment, arrayUnion, arrayRemove };
             window.firebaseAuth = { signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut };
         } catch (e) { console.error("Firebase Init Error:", e); }
     </script>
@@ -263,6 +263,12 @@
         // PIN 원문은 저장하지 않고 SHA-256 해시만 남긴다.
         const LOOKUP_SALT = 'bambooforest-lookup-v1';
 
+        // ── 고충 접수 창구 ────────────────────────────────────────────
+        // 고충은 사내 카카오톡 채널에서 이미 운영 중이라 그쪽을 1차 창구로 둔다.
+        // 다만 카카오톡은 프로필이 그대로 보이는 '기명' 창구다. 신원을 드러내기
+        // 어려운 사안이야말로 고충 접수의 핵심이므로, 웹 익명 접수를 함께 남긴다.
+        const KAKAO_CHANNEL_URL = 'https://pf.kakao.com/_kGxhxnX/chat';
+
         // ── 접수번호 ──────────────────────────────────────────────────
         // 예전 형식(GC-202602-410381)은 16자에 의미 없는 숫자라 외우기도, 받아
         // 적기도 어려웠다. 앞의 'GC-202602-' 는 신고자에게 아무 정보도 주지 않는다.
@@ -399,6 +405,11 @@
             const parsed = Number(data?.[key]);
             return Number.isFinite(parsed) && parsed > 0 ? parsed : 3;
         };
+        // 팀 단위 결과를 몇 명부터 보여줄지.
+        // 3명짜리 팀에서 '심리적 안전감 1.5' 가 뜨면 누가 뭐라고 답했는지 사실상 드러난다.
+        // 익명 진단은 이 지점에서 무너지므로, 표본이 이보다 적은 팀은 점수 자체를
+        // 산출하지 않는다(화면에서 가리는 게 아니라 저장하지 않는다).
+        const PULSE_MIN_N = 5;
         const scoreToPercent = (score) => Math.round(((score - 1) / 4) * 100);
         const scoreToRiskPercent = (score) => Math.round(((5 - score) / 4) * 100);
 
@@ -437,6 +448,7 @@
 
                     const resetPromises = effectiveTeams.map((team) =>
                         updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
+                            responseCount: 0,
                             status: '양호',
                             workload: '적정',
                             conflict: '낮음',
@@ -492,9 +504,13 @@
 
                 const updatePromises = effectiveTeams.map(async (team) => {
                     const teamResponses = currentDocs.filter(d => d.data().teamId === team.id);
-                    if(teamResponses.length === 0) {
+                    // 표본이 너무 적으면 집계하지 않는다. 점수도 키워드도 남기지 않으므로
+                    // 관리자 화면에도, Firestore 에도 개인을 추정할 단서가 생기지 않는다.
+                    // 응답 자체는 survey_responses 에 그대로 있어 전사 통계에는 반영된다.
+                    if(teamResponses.length < PULSE_MIN_N) {
                         await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
-                            status: '양호',
+                            responseCount: teamResponses.length,
+                            status: teamResponses.length === 0 ? '양호' : '표본부족',
                             workload: '적정',
                             conflict: '낮음',
                             leadership: '보통',
@@ -540,6 +556,7 @@
                     else if (diagnosisDrivers.length > 0) newStatus = '위험';
 
                     await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
+                        responseCount: tc,
                         status: newStatus,
                         workload: diagnosisScores.workload <= 2.5 ? '과부하' : '적정',
                         conflict: diagnosisScores.relationship <= 2.5 ? '높음' : '낮음',
@@ -1424,32 +1441,104 @@
         // 두 개(관리자 전용 / 전체 공개)를 함께 두고 있어 그 구분이 중요하다.
         // 다만 급히 제보하려는 사람에게 벽이 되면 안 되므로, 각 항목에서 바로
         // 해당 화면으로 넘어갈 수 있게 한다.
+        const ComplaintIntakeView = ({ setView }) => {
+            const routes = [
+                {
+                    icon: 'message-circle',
+                    title: '카카오톡 채널 (기본 창구)',
+                    body: '평소 쓰시던 사내 카카오톡 채널로 바로 연결됩니다. 담당자와 대화하듯 주고받을 수 있고, 별도 접수번호가 필요 없습니다.',
+                    caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 익명이 아닙니다.'
+                },
+                {
+                    icon: 'user-x',
+                    title: '웹 익명 접수',
+                    body: '이름·부서·연락처를 아예 받지 않습니다. 제출하면 접수번호가 나오고, 그 번호와 PIN 으로 진행 상황과 담당자 답변을 확인합니다.',
+                    caution: '접수번호와 PIN 을 잃어버리면 다시 찾을 수 없습니다.'
+                }
+            ];
+
+            return (
+                <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8 space-y-5">
+                    <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-6 md:p-10">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100 mb-4">
+                            <Icon name="shield" size={13} /> 담당자만 봅니다
+                        </span>
+                        <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight leading-snug">고충 접수</h1>
+                        <p className="text-sm md:text-base text-slate-600 mt-4 leading-relaxed">
+                            괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별 확인과 조치가 필요한 일은
+                            게시판이 아니라 이곳으로 남겨주세요. 게시판과 달리 담당자 외에는 누구도 볼 수 없습니다.
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-6">
+                            <a href={KAKAO_CHANNEL_URL} target="_blank" rel="noopener noreferrer"
+                               className="bg-[#FEE500] text-[#3C1E1E] px-5 py-3 rounded-xl text-sm font-bold hover:brightness-95 transition-all flex items-center gap-2 border border-yellow-300">
+                                <Icon name="message-circle" size={16} /> 카카오톡 채널로 접수하기
+                            </a>
+                            <button onClick={() => setView('complaint-form')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
+                                <Icon name="user-x" size={16} /> 웹으로 익명 접수하기
+                            </button>
+                            <button onClick={() => setView('complaint-lookup')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
+                                <Icon name="search" size={16} /> 내 접수 조회
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {routes.map(r => (
+                            <div key={r.title} className="bg-white rounded-2xl border border-slate-200 p-5 md:p-6 flex flex-col">
+                                <div className="flex items-center gap-2.5 mb-3">
+                                    <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-brand-50 text-brand-600 border border-brand-100">
+                                        <Icon name={r.icon} size={18} />
+                                    </span>
+                                    <p className="font-bold text-slate-900">{r.title}</p>
+                                </div>
+                                <p className="text-sm text-slate-600 leading-relaxed flex-1">{r.body}</p>
+                                <p className="mt-4 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 leading-relaxed">
+                                    <span className="font-bold">알아두세요 · </span>{r.caution}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-red-200 p-6 md:p-8">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Icon name="alert-circle" size={18} className="text-red-600" />
+                            <h2 className="text-lg font-bold text-slate-800">신원이 드러나면 곤란한 일이라면</h2>
+                        </div>
+                        <p className="text-sm text-slate-700 leading-relaxed">
+                            상급자나 동료가 관련된 사안, 보복이 걱정되는 사안은 <span className="font-bold">웹 익명 접수</span>를 이용해주세요.
+                            카카오톡은 편하지만 누가 보냈는지가 그대로 드러나, 정작 말하기 가장 어려운 이야기에는 맞지 않습니다.
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
         const GuideView = ({ setView }) => {
             const channels = [
+                {
+                    id: 'board',
+                    icon: 'message-square',
+                    label: '대나무숲 게시판',
+                    tagline: '구성원 모두가 봅니다',
+                    tone: 'brand',
+                    desc: '개선 아이디어, 칭찬, 소소한 질문처럼 함께 이야기하고 싶은 주제를 자유롭게 나눕니다. 이 사이트의 기본 공간입니다.',
+                    points: ['모든 구성원이 읽고 댓글', '글마다 다른 익명 표식', `신고 ${BOARD_BLIND_THRESHOLD}건이면 자동으로 가려짐`],
+                    cta: '게시판 둘러보기'
+                },
                 {
                     id: 'complaint',
                     icon: 'shield',
                     label: '고충 접수',
-                    tagline: '관리자만 봅니다',
-                    tone: 'brand',
-                    desc: '괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별적으로 확인과 조치가 필요한 일을 접수합니다.',
-                    points: ['HR 담당자만 열람', '접수번호로 진행 상황 추적', '담당자와 1:1 대화 가능'],
-                    cta: '고충 접수하기'
-                },
-                {
-                    id: 'board',
-                    icon: 'users',
-                    label: '대나무숲 게시판',
-                    tagline: '구성원 모두가 봅니다',
+                    tagline: '담당자만 봅니다',
                     tone: 'slate',
-                    desc: '개선 아이디어, 칭찬, 소소한 질문처럼 함께 이야기하고 싶은 주제를 자유롭게 나눕니다.',
-                    points: ['모든 구성원이 읽고 댓글', '글마다 다른 익명 표식', '신고가 쌓이면 자동으로 가려짐'],
-                    cta: '게시판 둘러보기'
+                    desc: '괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별적으로 확인과 조치가 필요한 일을 접수합니다. 사내 카카오톡 채널 또는 웹 익명 접수를 씁니다.',
+                    points: ['담당자만 열람', '카카오톡 채널은 기명', '익명이 필요하면 웹 접수'],
+                    cta: '고충 접수 안내'
                 }
             ];
 
             const steps = [
-                { n: '1', title: '접수하기', desc: '익명 또는 기명으로 작성합니다. 익명을 고르면 부서·이름·연락처를 아예 받지 않습니다.' },
+                { n: '1', title: '접수하기', desc: '웹 익명 접수에서 작성합니다. 익명을 고르면 부서·이름·연락처를 아예 받지 않습니다.' },
                 { n: '2', title: '접수번호와 PIN 저장', desc: '제출 직후 ‘엔코스-73152’ 같은 접수번호가 발급됩니다. 직접 정하신 PIN 과 함께 보관해주세요.' },
                 { n: '3', title: '담당자 확인', desc: '접수 → 검토중 → 조사중 → 조치중 → 종결 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
                 { n: '4', title: '결과 확인', desc: "‘내 접수 조회’ 에서 접수번호와 PIN 을 넣으면 처리 상태와 담당자 답변을 볼 수 있습니다." }
@@ -1474,12 +1563,15 @@
                             말하기 어려운 이야기를<br className="hidden md:block" /> 안전하게 꺼내는 곳
                         </h1>
                         <p className="text-sm md:text-base text-slate-600 mt-4 leading-relaxed">
-                            엔코스 대나무숲은 구성원의 고충과 의견을 익명으로 전달받는 창구입니다.
-                            혼자 감당하지 마시고, 편하신 방법으로 남겨주세요.
+                            엔코스 대나무숲은 구성원이 익명으로 이야기를 나누는 공간입니다.
+                            평소 생각은 게시판에 남기고, 담당자의 확인이 필요한 일은 고충 접수를 이용해주세요.
                         </p>
                         <div className="flex flex-wrap gap-2 mt-6">
-                            <button onClick={() => setView('complaint')} className="bg-brand-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-brand-700 shadow-brand transition-colors flex items-center gap-2">
-                                <Icon name="edit-3" size={16} /> 고충 접수하기
+                            <button onClick={() => setView('board')} className="bg-brand-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-brand-700 shadow-brand transition-colors flex items-center gap-2">
+                                <Icon name="edit-3" size={16} /> 게시판 둘러보기
+                            </button>
+                            <button onClick={() => setView('complaint')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
+                                <Icon name="shield" size={16} /> 고충 접수 안내
                             </button>
                             <button onClick={() => setView('complaint-lookup')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
                                 <Icon name="search" size={16} /> 내 접수 조회
@@ -1524,8 +1616,8 @@
 
                     {/* 접수 후 무슨 일이 일어나는지 */}
                     <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-6 md:p-8">
-                        <h2 className="text-lg font-bold text-slate-800">고충 접수는 이렇게 진행됩니다</h2>
-                        <p className="text-sm text-slate-500 mt-1 mb-6">접수하고 끝이 아니라, 진행 상황을 직접 확인하실 수 있습니다.</p>
+                        <h2 className="text-lg font-bold text-slate-800">웹 익명 접수는 이렇게 진행됩니다</h2>
+                        <p className="text-sm text-slate-500 mt-1 mb-6">접수하고 끝이 아니라, 진행 상황을 직접 확인하실 수 있습니다. (카카오톡 채널은 대화로 바로 주고받습니다)</p>
                         <ol className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-4 lg:gap-6">
                             {steps.map(st => (
                                 <li key={st.n} className="flex gap-3.5 lg:flex-col lg:gap-2.5">
@@ -1575,6 +1667,12 @@
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
                             </li>
+                            <li className="text-sm text-slate-700 leading-relaxed">
+                                <span className="font-bold">카카오톡 채널은 익명이 아닙니다.</span> 프로필 이름과 사진이 담당자에게 보입니다. 신원을 드러내기 어려운 사안은 웹 익명 접수를 이용해주세요.
+                            </li>
+                            <li className="text-sm text-slate-700 leading-relaxed">
+                                <span className="font-bold">조직 진단 결과는 팀 단위로만 공개됩니다.</span> 응답이 {PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 아예 산출하지 않습니다.
+                            </li>
                         </ul>
                     </div>
 
@@ -1582,8 +1680,8 @@
                         <p className="text-white font-bold text-lg">지금 바로 시작하실 수 있습니다</p>
                         <p className="text-slate-300 text-sm mt-2">어떤 이야기든 괜찮습니다. 익명으로 남겨주세요.</p>
                         <div className="flex flex-wrap gap-2 justify-center mt-5">
-                            <button onClick={() => setView('complaint')} className="bg-brand-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-brand-700 transition-colors">고충 접수하기</button>
-                            <button onClick={() => setView('board')} className="bg-white/10 text-white border border-white/20 px-5 py-3 rounded-xl text-sm font-bold hover:bg-white/20 transition-colors">게시판 둘러보기</button>
+                            <button onClick={() => setView('board')} className="bg-brand-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-brand-700 transition-colors">게시판 둘러보기</button>
+                            <button onClick={() => setView('complaint')} className="bg-white/10 text-white border border-white/20 px-5 py-3 rounded-xl text-sm font-bold hover:bg-white/20 transition-colors">고충 접수 안내</button>
                             <button onClick={() => setView('pulse-survey')} className="bg-white/10 text-white border border-white/20 px-5 py-3 rounded-xl text-sm font-bold hover:bg-white/20 transition-colors">조직 진단 참여</button>
                         </div>
                     </div>
@@ -1607,10 +1705,22 @@
             { value: 'question',   label: '질문' }
         ];
         const BOARD_SALT = 'bambooforest-board-v1';
-        const BOARD_BLIND_THRESHOLD = 3;   // 신고 3건이면 자동 블라인드 후 관리자 검토
+        // 전사 300명 기준. 3건이면 세 명이 짜고 불편한 글을 가릴 수 있어 신고가
+        // 오히려 입막음 수단이 된다. 읽는 사람이 수십 명인 글에서 '이건 선을 넘었다'는
+        // 신호가 되려면 그보다 두터워야 해서 5건으로 둔다.
+        // (인원이 크게 늘거나 오남용이 보이면 이 숫자만 조정하면 된다)
+        const BOARD_BLIND_THRESHOLD = 5;
         const BOARD_PAGE_SIZE = 10;        // 한 번에 불러오는 글 수
 
         const getBoardCategory = (value) => BOARD_CATEGORIES.find(c => c.value === value) || BOARD_CATEGORIES[0];
+
+        // 블라인드 여부는 저장된 플래그가 아니라 신고 배열에서 파생한다.
+        // 두 사람이 동시에 신고해 임계치를 같이 넘기면, 플래그를 각자 계산해
+        // 쓰는 방식에서는 아무도 켜지 못한 채 넘어가기 때문이다.
+        //  · hidden === true   → 관리자가 직접 가림
+        //  · blindCleared      → 관리자가 신고 누적 블라인드를 해제함
+        const isBlinded = (post) => post.hidden === true
+            || (!post.blindCleared && (post.reportedBy || []).length >= BOARD_BLIND_THRESHOLD);
 
         const makeNonce = () => {
             const bytes = new Uint8Array(16);
@@ -1636,7 +1746,7 @@
             return new Date(ms).toLocaleDateString();
         };
 
-        const BoardView = ({ user, role }) => {
+        const BoardView = ({ user, role, setView }) => {
             const isAdmin = role === 'admin';
             const [posts, setPosts] = useState([]);
             const [comments, setComments] = useState([]);
@@ -1704,7 +1814,7 @@
             // 정렬·필터·개수는 서버 쿼리가 이미 처리했다.
             // 여기서는 블라인드된 글만 걷어낸다(관리자와 작성자 본인에게는 남긴다).
             const visiblePosts = useMemo(
-                () => posts.filter(p => !p.hidden || isAdmin || myTags[p.id] === p.authorTag),
+                () => posts.filter(p => !isBlinded(p) || isAdmin || myTags[p.id] === p.authorTag),
                 [posts, isAdmin, myTags]
             );
 
@@ -1726,6 +1836,7 @@
                         commentCount: 0,
                         reportedBy: [],
                         hidden: false,
+                        blindCleared: false,
                         createdAt: window.firestore.serverTimestamp()
                     });
                     setDraft({ category: 'free', content: '' });
@@ -1751,7 +1862,7 @@
                         createdAt: window.firestore.serverTimestamp()
                     });
                     await window.firestore.updateDoc(ref('board_posts', selected.id), {
-                        commentCount: (selected.commentCount || 0) + 1
+                        commentCount: window.firestore.increment(1)
                     });
                     setCommentDraft("");
                 } catch (err) {
@@ -1761,14 +1872,16 @@
                 }
             };
 
+            // 화면에서 읽은 배열을 통째로 다시 쓰면, 같은 순간 다른 사람이 누른 공감이
+            // 지워진다. 300명이 같은 글을 보는 상황에서는 실제로 부딪힌다.
+            // 그래서 배열과 카운터 모두 서버 측 원자 연산으로 넘긴다.
             const toggleLike = async (post) => {
                 const tag = myTags[post.id];
                 if (!tag) return;
-                const likedBy = post.likedBy || [];
-                const next = likedBy.includes(tag) ? likedBy.filter(t => t !== tag) : [...likedBy, tag];
+                const liked = (post.likedBy || []).includes(tag);
                 await window.firestore.updateDoc(ref('board_posts', post.id), {
-                    likedBy: next,
-                    likeCount: next.length
+                    likedBy: liked ? window.firestore.arrayRemove(tag) : window.firestore.arrayUnion(tag),
+                    likeCount: window.firestore.increment(liked ? -1 : 1)
                 });
             };
 
@@ -1778,10 +1891,8 @@
                 const reportedBy = post.reportedBy || [];
                 if (reportedBy.includes(tag)) return alert("이미 신고하신 글입니다.");
                 if (!confirm("이 글을 신고하시겠습니까? 신고가 누적되면 자동으로 가려지고 관리자가 검토합니다.")) return;
-                const next = [...reportedBy, tag];
                 await window.firestore.updateDoc(ref('board_posts', post.id), {
-                    reportedBy: next,
-                    hidden: post.hidden || next.length >= BOARD_BLIND_THRESHOLD
+                    reportedBy: window.firestore.arrayUnion(tag)
                 });
                 alert("신고가 접수되었습니다.");
             };
@@ -1795,8 +1906,12 @@
                 setSelectedId(null);
             };
 
+            // 해제는 관리자가 신고 누적 결과를 뒤집는 행위라, 플래그를 내리는 것만으로는
+            // 부족하다(신고 건수는 그대로 남아 다시 가려진다). 해제 사실을 따로 남긴다.
             const setHidden = async (post, hidden) => {
-                await window.firestore.updateDoc(ref('board_posts', post.id), { hidden });
+                await window.firestore.updateDoc(ref('board_posts', post.id),
+                    hidden ? { hidden: true, blindCleared: false }
+                           : { hidden: false, blindCleared: true });
             };
 
             const removeComment = async (comment) => {
@@ -1823,7 +1938,7 @@
 
                 // 목록에서 가려도 상세로 들어오면 그대로 읽히면 안 된다.
                 // (글을 열어둔 채로 블라인드된 경우도 여기서 막힌다)
-                if (selected.hidden && !isAdmin && !mine) {
+                if (isBlinded(selected) && !isAdmin && !mine) {
                     return (
                         <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
                             <button onClick={() => setSelectedId(null)} className="text-sm text-slate-500 hover:text-brand-600 font-bold">← 목록으로</button>
@@ -1845,7 +1960,7 @@
                         {/* 넓은 화면에서는 본문과 댓글을 나란히 놓아 스크롤을 줄인다. */}
                         <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 items-start">
                         <div className="xl:col-span-3 bg-white rounded-2xl shadow-card border border-slate-100 p-5 md:p-7">
-                            {selected.hidden && (
+                            {isBlinded(selected) && (
                                 <div className="mb-4 bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-sm text-red-700 font-bold">
                                     신고 누적으로 가려진 글입니다. {isAdmin ? "관리자에게만 보입니다." : ""}
                                 </div>
@@ -1872,8 +1987,8 @@
                                     <button onClick={() => removePost(selected)} className="text-xs font-bold text-red-700 border border-red-200 px-3 py-2 rounded-lg hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors">삭제</button>
                                 )}
                                 {isAdmin && (
-                                    <button onClick={() => setHidden(selected, !selected.hidden)} className="text-xs font-bold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100">
-                                        {selected.hidden ? "숨김 해제" : "숨기기"}
+                                    <button onClick={() => setHidden(selected, !isBlinded(selected))} className="text-xs font-bold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100">
+                                        {isBlinded(selected) ? "숨김 해제" : "숨기기"}
                                     </button>
                                 )}
                             </div>
@@ -1920,6 +2035,17 @@
                                 <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
                                     누구나 익명으로 쓰고 함께 읽는 공간입니다. 작성자 정보는 저장하지 않으며, 글마다 다른 익명 표식이 부여됩니다.
                                 </p>
+                                {/* 관리자에게는 구성원용 화면으로 가는 링크가 되지 않는다(라우팅이 되돌린다) */}
+                                {setView && !isAdmin && (
+                                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
+                                        <button onClick={() => setView('guide')} className="text-xs font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                                            <Icon name="info" size={13} /> 처음이신가요? 이용 안내 보기
+                                        </button>
+                                        <button onClick={() => setView('complaint')} className="text-xs font-bold text-slate-500 hover:text-brand-600 flex items-center gap-1">
+                                            <Icon name="shield" size={13} /> 담당자에게만 알리고 싶다면 · 고충 접수
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             {!composing && (
                                 <button onClick={() => setComposing(true)} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 shadow-brand transition-colors flex items-center gap-1.5 whitespace-nowrap">
@@ -1979,7 +2105,7 @@
                                         <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100">{getBoardCategory(post.category).label}</span>
                                         <span className="text-xs text-slate-400">{timeAgo(post.createdAt)}</span>
                                         {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
-                                        {post.hidden && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">블라인드</span>}
+                                        {isBlinded(post) && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">블라인드</span>}
                                     </div>
                                     <p className="text-sm text-slate-700 leading-relaxed line-clamp-3 whitespace-pre-wrap break-words">{post.content}</p>
                                     <div className="flex items-center gap-4 mt-3 text-xs font-bold text-slate-400">
@@ -2024,8 +2150,15 @@
                 if (!data || data.length === 0) {
                     return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col justify-center items-center text-center"><div className="bg-slate-100 p-3 rounded-full mb-3"><Icon name="bar-chart-2" size={24} className="text-slate-400" /></div><p className="text-slate-500 font-medium">데이터가 없습니다</p><p className="text-xs text-slate-400 mt-1">설정 메뉴에서 데이터를 입력하거나<br/>자동 산출 기능을 사용해보세요.</p></div>);
                 }
-                const maxVal = Math.max(...data.map(d => Number(d.value)), 100);
-                const points = data.map((d, i) => { const x = (i / (data.length - 1)) * 280 + 10; const y = 100 - (Number(d.value) / maxVal) * 80 - 10; return `${x},${y}`; }).join(" ");
+                const val = (d) => Number.isFinite(Number(d.value)) ? Number(d.value) : 0;
+                const maxVal = Math.max(...data.map(val), 100);
+                const yOf = (d) => 100 - (val(d) / maxVal) * 80 - 10;
+                // 진단을 막 시작해 기간이 하나뿐이면 (i / (length - 1)) 이 0/0 이 된다.
+                // 좌표가 NaN 인 polyline 은 SVG 오류를 내고 차트가 통째로 사라진다.
+                // 첫 달에 반드시 지나가는 상태라 한 점일 때는 짧은 가로선으로 그린다.
+                const points = data.length === 1
+                    ? `120,${yOf(data[0])} 180,${yOf(data[0])}`
+                    : data.map((d, i) => `${(i / (data.length - 1)) * 280 + 10},${yOf(d)}`).join(" ");
                 return (<div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="activity" size={20} className="text-brand-500" /> 몰입도(eNPS) 추이</h3><div className="relative h-40 w-full mt-4"><svg viewBox="0 0 300 100" className="w-full h-full overflow-visible"><polyline points={points} fill="none" stroke="#d92b2b" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="chart-path"/><div className="flex justify-between text-xs text-slate-400 mt-2">{data.map((d, i) => <span key={i}>{d.label}</span>)}</div></svg></div></div>);
             };
             const VoEWidget = () => {
@@ -2043,7 +2176,7 @@
                 <div className="space-y-6 fade-in">
                     <div className="bg-brand-50 border border-brand-100 p-3 rounded-lg text-sm text-brand-800 flex items-center gap-2 mb-4"><Icon name="calendar" size={16} /> 현재 조회 중인 데이터: <span className="font-bold">{currentPeriod}</span></div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{/* 아이콘 타일은 네 장 모두 같은 브랜드 톤으로 통일하고, 좋고 나쁨은 오른쪽 증감 배지로만 나타낸다. */}<KPICard metric={{...globalMetrics.enps, icon: "users", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.safety, icon: "shield-check", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.burnout, icon: "flame", color: "text-brand-600 bg-brand-50", unit: "%"}} /><KPICard metric={{...globalMetrics.growth, icon: "trending-up", color: "text-brand-600 bg-brand-50", unit: "%"}} /></div>
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 p-6"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="bar-chart-2" size={20} className="text-slate-400" /> 팀별 조직진단 히트맵 ({currentPeriod})</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">핵심 위험요인</th><th className="p-3 text-center">업무</th><th className="p-3 text-center">안전감</th><th className="p-3 text-center">성장</th><th className="p-3 text-center">몰입</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3 font-medium">{t.name}</td><td className="p-3"><span className={`w-2 h-2 rounded-full inline-block mr-2 ${t.status === '심각' ? 'bg-red-600' : t.status === '위험' ? 'bg-amber-500' : 'bg-green-500'}`}></span>{t.status}</td><td className="p-3 text-slate-500">{(t.diagnosisDrivers || []).length > 0 ? t.diagnosisDrivers.join(', ') : '특이 리스크 없음'}</td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.workload} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.safety} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.growth} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.engagement} /></td></tr>))}</tbody></table></div></div><div className="lg:col-span-1 h-full"><ActionBoardWidget user={user} /></div></div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 p-6"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="bar-chart-2" size={20} className="text-slate-400" /> 팀별 조직진단 히트맵 ({currentPeriod})</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">핵심 위험요인</th><th className="p-3 text-center">업무</th><th className="p-3 text-center">안전감</th><th className="p-3 text-center">성장</th><th className="p-3 text-center">몰입</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3 font-medium">{t.name}</td><td className="p-3"><span className={`w-2 h-2 rounded-full inline-block mr-2 ${t.status === '심각' ? 'bg-red-600' : t.status === '위험' ? 'bg-amber-500' : t.status === '표본부족' ? 'bg-slate-300' : 'bg-green-500'}`}></span>{t.status}</td><td className="p-3 text-slate-500">{t.status === '표본부족' ? `응답 ${t.responseCount || 0}명 · ${PULSE_MIN_N}명 미만이라 집계하지 않음` : (t.diagnosisDrivers || []).length > 0 ? t.diagnosisDrivers.join(', ') : '특이 리스크 없음'}</td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.workload} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.safety} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.growth} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.engagement} /></td></tr>))}</tbody></table></div><p className="text-xs text-slate-400 mt-3">응답이 {PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 산출하지 않습니다.</p></div><div className="lg:col-span-1 h-full"><ActionBoardWidget user={user} /></div></div>
                     <div className="h-64"><TrendChart data={chartData.trend} /></div>
                 </div>
             );
@@ -3192,7 +3325,7 @@
                     {/* 단순 안내문은 중립색으로 — 레드는 오류/경고에만 쓴다. */}
                     <p className="text-sm text-slate-500 mb-4 font-medium">현재 선택된 기간: <span className="font-bold text-slate-700">{currentPeriod}</span> 에 데이터를 추가합니다.</p>
                     <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6 bg-slate-50 p-4 rounded-lg"><input placeholder="팀명" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="md:col-span-2 border p-2 rounded text-sm" required /><select value={formData.workload} onChange={e => setFormData({...formData, workload: e.target.value})} className="border p-2 rounded text-sm"><option value="적정">업무: 적정</option><option value="과부하">업무: 과부하</option></select><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="border p-2 rounded text-sm"><option value="양호">상태: 양호</option><option value="위험">상태: 위험</option></select><button className="bg-brand-600 text-white md:col-span-1 rounded font-bold text-sm">저장</button></form>
-                    <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3">{t.name}</td><td className="p-3"><Badge type={t.status === '위험' ? 'critical' : 'good'} text={t.status} /></td><td className="p-3 text-xs text-slate-500">{t.keywords ? t.keywords.join(", ") : "-"}</td><td className="p-3"><button onClick={() => handleDelete(t.id)} className="text-red-500 text-xs">삭제</button></td></tr>))}</tbody></table></div>
+                    <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3">{t.name}</td><td className="p-3"><Badge type={t.status === '위험' || t.status === '심각' ? 'critical' : t.status === '표본부족' ? 'neutral' : 'good'} text={t.status} /></td><td className="p-3 text-xs text-slate-500">{t.keywords ? t.keywords.join(", ") : "-"}</td><td className="p-3"><button onClick={() => handleDelete(t.id)} className="text-red-500 text-xs">삭제</button></td></tr>))}</tbody></table></div>
                 </div>
             );
         };
@@ -3437,13 +3570,14 @@
                 { id: 'report', label: '리포트 생성', icon: 'file-text' }, 
                 { id: 'settings', label: '설정', icon: 'settings' }
             ];
-            // 고충 접수와 그 조회를 붙여 두고, 성격이 다른 게시판은 그 아래로.
+            // 고충 접수는 사내 카카오톡 채널이 맡고, 이 사이트의 중심은 대나무숲이다.
+            // 매일 들어오는 화면을 맨 위에 두고, 어쩌다 한 번 쓰는 창구를 아래로 내린다.
             const empMenu = [
+                { id: 'board', label: '대나무숲 게시판', icon: 'message-square' },
                 { id: 'guide', label: '이용 안내', icon: 'info' },
-                { id: 'complaint', label: '고충 접수', icon: 'message-square' },
-                { id: 'complaint-lookup', label: '내 접수 조회', icon: 'search' },
-                { id: 'board', label: '대나무숲 게시판', icon: 'users' },
-                { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' }
+                { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' },
+                { id: 'complaint', label: '고충 접수', icon: 'shield' },
+                { id: 'complaint-lookup', label: '내 접수 조회', icon: 'search' }
             ];
             const menu = role === 'admin' ? adminMenu : empMenu;
             
@@ -3477,7 +3611,7 @@
                         </div>
                         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                             {menu.map(item => (
-                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id ? 'active' : 'text-slate-600'}`}>
+                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id || (item.id === 'complaint' && currentView === 'complaint-form') ? 'active' : 'text-slate-600'}`}>
                                     <Icon name={item.icon} size={20} />
                                     {item.label}
                                 </button>
@@ -3497,7 +3631,7 @@
         const App = () => {
             const [user, setUser] = useState(null);
             const [role, setRole] = useState('employee'); 
-            const [currentView, setCurrentView] = useState('guide');   // 구성원 첫 화면은 이용 안내
+            const [currentView, setCurrentView] = useState('board');    // 구성원 첫 화면은 대나무숲 게시판
             const [showAdminLogin, setShowAdminLogin] = useState(false);
             const [selectedYear, setSelectedYear] = useState("2026");
             const [selectedMonth, setSelectedMonth] = useState("2");
@@ -3542,11 +3676,21 @@
                 initAuth();
             }, []);
 
+            const prevRole = useRef(role);
             useEffect(() => {
                 // 게시판은 양쪽이 같은 화면을 본다(관리자는 숨김 처리 권한만 더 갖는다).
                 const sharedViews = ['board'];
-                const employeeOnlyViews = ['guide', 'complaint', 'complaint-lookup', 'pulse-survey'];
-                if(role === 'employee' && !employeeOnlyViews.includes(currentView) && !sharedViews.includes(currentView)) setCurrentView('guide');
+                const employeeOnlyViews = ['guide', 'complaint', 'complaint-form', 'complaint-lookup', 'pulse-survey'];
+
+                // 역할이 바뀌는 순간에는 그 역할의 첫 화면으로 보낸다.
+                // 게시판이 공용 화면이라, 이 처리가 없으면 관리자로 로그인해도
+                // 구성원 화면인 게시판에 그대로 남는다.
+                if (prevRole.current !== role) {
+                    prevRole.current = role;
+                    setCurrentView(role === 'admin' ? 'dashboard' : 'board');
+                    return;
+                }
+                if(role === 'employee' && !employeeOnlyViews.includes(currentView) && !sharedViews.includes(currentView)) setCurrentView('board');
                 else if(role === 'admin' && employeeOnlyViews.includes(currentView)) setCurrentView('dashboard');
             }, [role, currentView]);
 
@@ -3645,11 +3789,13 @@
                             </div>
                         </header>
                         
-                        {currentView === 'board' && <BoardView user={user} role={role} />}
+                        {currentView === 'board' && <BoardView user={user} role={role} setView={setCurrentView} />}
 
                         {role === 'employee' && currentView === 'guide' && <GuideView setView={setCurrentView} />}
+                        {role === 'employee' && currentView === 'complaint' && <ComplaintIntakeView setView={setCurrentView} />}
                         {role === 'employee' && currentView === 'complaint-lookup' && <ComplaintLookupView />}
-                        {role === 'employee' && !['guide', 'complaint-lookup', 'board'].includes(currentView) && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
+                        {/* complaint-form 은 카카오톡 대신 익명으로 남기려는 사람이 들어오는 화면 */}
+                        {role === 'employee' && ['complaint-form', 'pulse-survey'].includes(currentView) && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} mode={currentView} />}
                         
                         {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         {role === 'admin' && currentView === 'complaints' && <ComplaintManagementView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}

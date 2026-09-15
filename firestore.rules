@@ -77,11 +77,17 @@ service cloud.firestore {
       // 수정: 신고자↔담당자 대화, 게시판 공감·신고 때문에 익명에게도 필요하다.
       // 다만 고충 건에서 익명 사용자가 바꿀 수 있는 것은 대화뿐이다.
       // (처리 상태·담당자·관리 메모·리스크 평가는 관리자만 손댈 수 있다)
+      //
+      // 게시판도 마찬가지로 '반응'만 열어둔다. hidden 과 blindCleared 는
+      // 블라인드를 켜고 끄는 스위치라, 열어두면 신고당한 사람이 직접 해제해
+      // 신고 기능 자체가 무의미해진다. 관리자만 손댈 수 있다.
       allow update: if isAdmin()
                     || (isComplaint() && signedIn()
                         && request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly(['thread', 'updatedAt']))
-                    || (isBoard() && signedIn());
+                    || (isBoard() && signedIn()
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['likedBy', 'likeCount', 'commentCount', 'reportedBy']));
 
       // 삭제: 고충 접수와 진단 응답은 기록 보관 대상이라 관리자만 지운다.
       allow delete: if isAdmin() || (isBoard() && signedIn());
