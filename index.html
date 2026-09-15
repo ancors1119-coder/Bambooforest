@@ -839,7 +839,7 @@
                     icon: 'message-circle',
                     title: '카카오톡 채널로 연결됩니다',
                     body: '평소 쓰시던 사내 카카오톡 채널이 그대로 접수 창구입니다. 담당자와 대화하듯 주고받으실 수 있고, 별도 양식이나 접수번호가 필요 없습니다.',
-                    caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 익명이 아닙니다.'
+                    caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 아래 안내대로 프로필을 바꾸고 접수하실 수 있습니다.'
                 },
                 {
                     icon: 'lock',
@@ -891,10 +891,35 @@
                             <h2 className="text-lg font-bold text-slate-800">이름을 밝히기 어려운 일이라면</h2>
                         </div>
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            카카오톡은 누가 보냈는지가 담당자에게 그대로 보입니다. 이름을 밝히기 어려운 이야기라면
-                            <span className="font-bold"> 대나무숲 게시판</span>에 익명으로 남겨주세요. 다만 게시판은 전체에게 공개되고
-                            개별 조사나 보호조치로 이어지지 않으니, 사안에 따라 골라 쓰시면 됩니다.
+                            담당자에게는 카카오톡 프로필의 <span className="font-bold">이름과 사진만</span> 보입니다.
+                            전화번호나 사번은 보이지 않습니다. 그래서 접수 전에 프로필을 바꿔두시면,
+                            담당자가 누가 보냈는지 알아보기 어렵습니다.
                         </p>
+                        <ol className="mt-4 space-y-2">
+                            {[
+                                '카카오톡 → 내 프로필 → 프로필 편집',
+                                '이름과 사진을 알아볼 수 없는 것으로 변경',
+                                '채널에 접수한 뒤, 처리가 끝나면 원래대로 되돌리기'
+                            ].map((step, i) => (
+                                <li key={step} className="flex gap-2.5 text-sm text-slate-700 leading-relaxed">
+                                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-brand-600 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                                    {step}
+                                </li>
+                            ))}
+                        </ol>
+                        <div className="mt-5 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5">
+                            <p className="text-xs text-slate-700 leading-relaxed">
+                                <span className="font-bold">다만 완전한 익명은 아닙니다. </span>
+                                프로필은 채널뿐 아니라 <span className="font-bold">가족·친구·동료 모두에게 함께 바뀝니다.</span>{' '}
+                                예전에 이 채널과 나눈 대화가 있으면 그 이력도 그대로 이어지고,
+                                글의 내용만으로 짐작될 수도 있습니다.
+                            </p>
+                            <p className="text-xs text-slate-700 leading-relaxed mt-2">
+                                신원이 드러나면 정말 곤란한 사안이라면,
+                                이름·부서를 아예 받지 않는 <span className="font-bold">대나무숲 게시판</span> 쪽이 더 안전합니다.
+                                (대신 전체에게 공개되고 개별 조사로 이어지지 않습니다)
+                            </p>
+                        </div>
                         <button onClick={() => setView('board')} className="mt-4 bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
                             <Icon name="message-square" size={15} /> 대나무숲 게시판으로
                         </button>
@@ -1052,7 +1077,7 @@
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">카카오톡 채널은 익명이 아닙니다.</span> 프로필 이름과 사진이 담당자에게 보입니다. 이름을 밝히기 어려운 이야기는 대나무숲 게시판을 이용해주세요.
+                                <span className="font-bold">카카오톡 채널은 익명이 아닙니다.</span> 프로필 이름과 사진이 담당자에게 보입니다(전화번호·사번은 보이지 않습니다). 접수 전에 프로필을 바꿔두는 방법을 ‘고충 접수’ 화면에서 안내하고 있습니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">조직 진단 결과는 팀 단위로만 공개됩니다.</span> 응답이 {PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 아예 산출하지 않습니다.
