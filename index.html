@@ -315,9 +315,15 @@
                     effectiveTeams = teamSnap.docs.map(d => ({ id: d.id, ...d.data() }));
                 }
 
-                const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses'));
+                // 기간 필터를 서버에 맡긴다. 전부 내려받아 브라우저에서 거르면
+                // 300명이 매주 응답하는 환경에서 1년이면 한 번 산출할 때마다
+                // 1만 건 이상을 읽게 되고, 읽기 요금도 그만큼 붙는다.
+                const q = query(
+                    collection(db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses'),
+                    where("period", "==", period)
+                );
                 const querySnapshot = await getDocs(q);
-                const currentDocs = querySnapshot.docs.filter(d => d.data().period === period);
+                const currentDocs = querySnapshot.docs;
                 const emptyMetrics = {
                     burnout: { label: "번아웃 리스크", value: "-", diff: "0" },
                     safety: { label: "심리적 안전감", value: "-", diff: "0" },
@@ -839,7 +845,7 @@
                     icon: 'message-circle',
                     title: '카카오톡 채널로 연결됩니다',
                     body: '평소 쓰시던 사내 카카오톡 채널이 그대로 접수 창구입니다. 담당자와 대화하듯 주고받으실 수 있고, 별도 양식이나 접수번호가 필요 없습니다.',
-                    caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 아래 안내대로 프로필을 바꾸고 접수하실 수 있습니다.'
+                    caution: '카카오톡 프로필(이름·사진)이 담당자에게 보입니다. 익명이 아닙니다. 아래 안내대로 프로필을 바꾸고 접수하실 수 있습니다.'
                 },
                 {
                     icon: 'lock',
@@ -1244,6 +1250,9 @@
                         likeCount: 0,
                         commentCount: 0,
                         reportedBy: [],
+                        // 배열 길이로는 서버에서 '신고 N건 이상' 을 찾을 수 없어,
+                        // 관리자 검토 대기 목록을 위해 개수를 따로 둔다.
+                        reportCount: 0,
                         hidden: false,
                         blindCleared: false,
                         createdAt: window.firestore.serverTimestamp()
@@ -1301,7 +1310,8 @@
                 if (reportedBy.includes(tag)) return alert("이미 신고하신 글입니다.");
                 if (!confirm("이 글을 신고하시겠습니까? 신고가 누적되면 자동으로 가려지고 관리자가 검토합니다.")) return;
                 await window.firestore.updateDoc(ref('board_posts', post.id), {
-                    reportedBy: window.firestore.arrayUnion(tag)
+                    reportedBy: window.firestore.arrayUnion(tag),
+                    reportCount: window.firestore.increment(1)
                 });
                 alert("신고가 접수되었습니다.");
             };
@@ -1540,7 +1550,56 @@
             );
         };
 
-        const DashboardView = ({ globalMetrics, chartData, teamStats, currentPeriod, user }) => {
+        // 신고가 쌓여 자동으로 가려진 글은 관리자가 들여다보기 전까지 아무도 모른다.
+        // 게시판 목록을 훑어야 발견되는 구조라, 방치되면 부당하게 가려진 글도 그대로 묻힌다.
+        // 그래서 대시보드에 검토 대기 건수를 띄운다.
+        const ReviewQueueCard = ({ setView }) => {
+            const [pending, setPending] = useState(0);
+
+            useEffect(() => {
+                if (!window.db) return;
+                return window.firestore.onSnapshot(
+                    window.firestore.query(
+                        window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'board_posts'),
+                        window.firestore.where("reportCount", ">=", BOARD_BLIND_THRESHOLD),
+                        window.firestore.limit(100)
+                    ),
+                    (snap) => {
+                        // 관리자가 이미 가리거나 해제한 글은 판단이 끝난 것이므로 뺀다.
+                        const rows = snap.docs.map(d => d.data())
+                            .filter(d => d.hidden !== true && !d.blindCleared);
+                        setPending(rows.length);
+                    },
+                    (e) => console.error("검토 대기 조회 실패:", e)
+                );
+            }, []);
+
+            const urgent = pending > 0;
+            return (
+                <div className={`rounded-xl border p-4 flex items-center gap-4 flex-wrap ${urgent ? 'bg-red-50 border-red-200' : 'bg-white border-slate-100'}`}>
+                    <span className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${urgent ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Icon name={urgent ? 'alert-circle' : 'shield-check'} size={20} />
+                    </span>
+                    <div className="flex-1 min-w-[200px]">
+                        <p className="font-bold text-slate-800 text-sm">
+                            게시판 검토 대기 <span className={urgent ? 'text-red-700' : 'text-slate-400'}>{pending}건</span>
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                            {urgent
+                                ? `신고 ${BOARD_BLIND_THRESHOLD}건이 쌓여 자동으로 가려진 글입니다. 내용을 확인하고 숨김을 유지할지 해제할지 정해주세요.`
+                                : `신고가 ${BOARD_BLIND_THRESHOLD}건 쌓이면 글이 자동으로 가려지고 여기에 표시됩니다.`}
+                        </p>
+                    </div>
+                    {urgent && (
+                        <button onClick={() => setView('board')} className="bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-700 transition-colors whitespace-nowrap">
+                            게시판에서 확인
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        const DashboardView = ({ globalMetrics, chartData, teamStats, currentPeriod, user, setView }) => {
             const KPICard = ({ metric }) => {
                 if(!metric) return null;
                 const valStr = String(metric.value);
@@ -1584,6 +1643,7 @@
             return (
                 <div className="space-y-6 fade-in">
                     <div className="bg-brand-50 border border-brand-100 p-3 rounded-lg text-sm text-brand-800 flex items-center gap-2 mb-4"><Icon name="calendar" size={16} /> 현재 조회 중인 데이터: <span className="font-bold">{currentPeriod}</span></div>
+                    <ReviewQueueCard setView={setView} />
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{/* 아이콘 타일은 네 장 모두 같은 브랜드 톤으로 통일하고, 좋고 나쁨은 오른쪽 증감 배지로만 나타낸다. */}<KPICard metric={{...globalMetrics.enps, icon: "users", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.safety, icon: "shield-check", color: "text-brand-600 bg-brand-50"}} /><KPICard metric={{...globalMetrics.burnout, icon: "flame", color: "text-brand-600 bg-brand-50", unit: "%"}} /><KPICard metric={{...globalMetrics.growth, icon: "trending-up", color: "text-brand-600 bg-brand-50", unit: "%"}} /></div>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 p-6"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="bar-chart-2" size={20} className="text-slate-400" /> 팀별 조직진단 히트맵 ({currentPeriod})</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">핵심 위험요인</th><th className="p-3 text-center">업무</th><th className="p-3 text-center">안전감</th><th className="p-3 text-center">성장</th><th className="p-3 text-center">몰입</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3 font-medium">{t.name}</td><td className="p-3"><span className={`w-2 h-2 rounded-full inline-block mr-2 ${t.status === '심각' ? 'bg-red-600' : t.status === '위험' ? 'bg-amber-500' : t.status === '표본부족' ? 'bg-slate-300' : 'bg-green-500'}`}></span>{t.status}</td><td className="p-3 text-slate-500">{t.status === '표본부족' ? `응답 ${t.responseCount || 0}명 · ${PULSE_MIN_N}명 미만이라 집계하지 않음` : (t.diagnosisDrivers || []).length > 0 ? t.diagnosisDrivers.join(', ') : '특이 리스크 없음'}</td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.workload} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.safety} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.growth} /></td><td className="p-3 text-center"><ScorePill value={t.diagnosisScores?.engagement} /></td></tr>))}</tbody></table></div><p className="text-xs text-slate-400 mt-3">응답이 {PULSE_MIN_N}명 미만인 팀은 응답자가 특정될 수 있어 점수를 산출하지 않습니다.</p></div><div className="lg:col-span-1 h-full"><ActionBoardWidget user={user} /></div></div>
                     <div className="h-64"><TrendChart data={chartData.trend} /></div>
@@ -2056,9 +2116,11 @@
             useEffect(() => {
                 if(!window.db) return;
                 setLoading(true);
-                // Modified: removed where clause to avoid index issues, doing client-side filtering
+                // 기간은 서버에서 거른다. 정렬은 그대로 브라우저에서 하므로
+                // where 하나뿐이라 복합 색인이 필요 없다(단일 필드 색인은 자동 생성).
                 const q = window.firestore.query(
-                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses')
+                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses'),
+                    window.firestore.where("period", "==", currentPeriod)
                 );
 
                 const unsubscribe = window.firestore.onSnapshot(q, (snapshot) => {
@@ -2073,11 +2135,9 @@
                                 date: rawData.createdAt ? new Date(rawData.createdAt.seconds * 1000).toLocaleString() : 'N/A',
                                 createdAtSeconds: rawData.createdAt ? rawData.createdAt.seconds : 0
                             };
-                        })
-                        // Client-side filtering for period
-                        .filter(item => item.period === currentPeriod);
-                    
-                    // Sort locally
+                        });
+
+                    // 정렬만 브라우저에서 한다(기간은 서버가 이미 걸렀다).
                     data.sort((a, b) => b.createdAtSeconds - a.createdAtSeconds);
                     
                     setResponses(data);
@@ -2180,7 +2240,8 @@
                 if (!window.db) return;
                 setLoading(true);
                 const q = window.firestore.query(
-                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses')
+                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'survey_responses'),
+                    window.firestore.where("period", "==", currentPeriod)
                 );
                 const unsubscribe = window.firestore.onSnapshot(q, (snapshot) => {
                     const list = snapshot.docs
@@ -2199,8 +2260,7 @@
                                 comments,
                                 createdAtSeconds: rawData.createdAt ? rawData.createdAt.seconds : 0
                             };
-                        })
-                        .filter(item => item.period === currentPeriod);
+                        });
                     list.sort((a, b) => b.createdAtSeconds - a.createdAtSeconds);
                     setResponses(list);
                     setLoading(false);
@@ -2820,7 +2880,7 @@
                         {role === 'employee' && currentView === 'complaint' && <ComplaintIntakeView setView={setCurrentView} />}
                         {role === 'employee' && currentView === 'pulse-survey' && <SurveyView teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
                         
-                        {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} />}
+                        {role === 'admin' && currentView === 'dashboard' && <DashboardView globalMetrics={globalMetrics} chartData={chartData} teamStats={teamStats} currentPeriod={currentPeriod} user={user} setView={setCurrentView} />}
                         {role === 'admin' && currentView === 'pulse' && <PulseInsightView teamStats={teamStats} currentPeriod={currentPeriod} />}
                         {role === 'admin' && currentView === 'teams' && <TeamManagementView teamStats={teamStats} currentPeriod={currentPeriod} />}
                         {role === 'admin' && currentView === 'analysis' && <AnalysisView teamStats={teamStats} globalMetrics={globalMetrics} chartData={chartData} currentPeriod={currentPeriod} aiConfig={aiConfig} />}

@@ -80,7 +80,8 @@ service cloud.firestore {
       allow update: if isAdmin()
                     || (isBoard() && signedIn()
                         && request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly(['likedBy', 'likeCount', 'commentCount', 'reportedBy']));
+                             .hasOnly(['likedBy', 'likeCount', 'commentCount',
+                                       'reportedBy', 'reportCount']));
 
       // 삭제: 고충 접수와 진단 응답은 기록 보관 대상이라 관리자만 지운다.
       allow delete: if isAdmin() || (isBoard() && signedIn());
