@@ -53,8 +53,11 @@ service cloud.firestore {
       // ── 집계·운영 데이터 ──────────────────────────────────────
       // 대시보드와 진단 화면이 쓰는 통계. 개인 식별 정보가 없어 열람은 열어두고
       // 쓰기만 관리자로 제한한다.
+      //
+      // teams 는 팀 목록(조직 구조)이다. 기간이 없어 달이 바뀌어도 그대로 남는다.
+      // 구성원의 진단 화면이 소속 부서를 고를 때 읽어야 하므로 열람은 열어둔다.
       function isStats() {
-        return collection in ['global_stats', 'team_stats', 'chart_stats', 'action_items'];
+        return collection in ['global_stats', 'team_stats', 'chart_stats', 'action_items', 'teams'];
       }
 
       // ── 읽기 ──────────────────────────────────────────────────
@@ -83,8 +86,15 @@ service cloud.firestore {
                              .hasOnly(['likedBy', 'likeCount', 'commentCount',
                                        'reportedBy', 'reportCount']));
 
-      // 삭제: 고충 접수와 진단 응답은 기록 보관 대상이라 관리자만 지운다.
-      allow delete: if isAdmin() || (isBoard() && signedIn());
+      // 삭제: 전부 관리자만.
+      //
+      // 게시판 글도 마찬가지다. 예전에는 로그인만 하면 남의 글도 지울 수 있었다.
+      // 작성자 정보를 저장하지 않아 규칙이 본인을 판정할 수 없었기 때문인데,
+      // 그 대신 화면에서만 막혀 있어 콘솔로는 누구나 게시판을 비울 수 있었다.
+      // 이제 구성원의 삭제는 deleteBoardPost / deleteBoardComment 함수를 거친다.
+      // 함수가 호출자 uid 로 익명 태그를 다시 계산해 작성자를 확인하고,
+      // Admin SDK 로 동작하므로 이 규칙에 걸리지 않는다.
+      allow delete: if isAdmin();
     }
 
     // ── 대나무숲이 쓰지 않는 컬렉션 ───────────────────────────

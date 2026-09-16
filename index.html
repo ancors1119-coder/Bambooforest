@@ -77,6 +77,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit, increment, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDm0qnGzq8P3zBBqW_4qjlMd9aq-QKrDyU",
@@ -94,6 +95,9 @@
             window.auth = getAuth(app);
             window.firestore = { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, query, orderBy, where, limit, increment, arrayUnion, arrayRemove };
             window.firebaseAuth = { signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut };
+            // 게시판 삭제는 규칙만으로 작성자를 판정할 수 없어(해시 계산 불가) 함수를 거친다.
+            const fns = getFunctions(app, 'asia-northeast3');
+            window.callFn = (name, payload) => httpsCallable(fns, name)(payload);
         } catch (e) { console.error("Firebase Init Error:", e); }
     </script>
 
@@ -315,13 +319,20 @@
             try {
                 let effectiveTeams = Array.isArray(teamsList) ? teamsList : [];
                 if (effectiveTeams.length === 0) {
-                    const teamQ = query(
-                        collection(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'),
-                        where("period", "==", period)
-                    );
-                    const teamSnap = await getDocs(teamQ);
+                    const teamSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'teams'));
                     effectiveTeams = teamSnap.docs.map(d => ({ id: d.id, ...d.data() }));
                 }
+                // 기간별 결과 문서의 ID 는 (기간, 팀) 으로 정해 둔다. 몇 번을 다시
+                // 산출해도 같은 문서를 덮어쓰므로 중복이 쌓이지 않는다.
+                const statRef = (teamId) =>
+                    doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', `${period}__${teamId}`);
+                const blankStat = (teamId, n) => ({
+                    teamId, period, responseCount: n,
+                    status: n === 0 ? '양호' : '표본부족',
+                    workload: '적정', conflict: '낮음', leadership: '보통',
+                    diagnosisScores: {}, diagnosisDrivers: [], keywords: [],
+                    calculatedAt: serverTimestamp()
+                });
 
                 // 기간 필터를 서버에 맡긴다. 전부 내려받아 브라우저에서 거르면
                 // 300명이 매주 응답하는 환경에서 1년이면 한 번 산출할 때마다
@@ -347,20 +358,7 @@
                     const currentTrend = chartSnap.exists() ? (chartSnap.data().trend || []) : [];
                     await setDoc(chartRef, { trend: currentTrend.filter(t => t.label !== period) }, { merge: true });
 
-                    const resetPromises = effectiveTeams.map((team) =>
-                        updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
-                            responseCount: 0,
-                            status: '양호',
-                            workload: '적정',
-                            conflict: '낮음',
-                            leadership: '보통',
-                            diagnosisScores: {},
-                            diagnosisDrivers: [],
-                            keywords: [],
-                            calculatedAt: serverTimestamp()
-                        })
-                    );
-                    await Promise.all(resetPromises);
+                    await Promise.all(effectiveTeams.map((team) => setDoc(statRef(team.id), blankStat(team.id, 0))));
 
                     if(!silent) alert(`현재 기간(${period})에 데이터가 없어 통계가 초기화되었습니다.`);
                     return;
@@ -409,17 +407,7 @@
                     // 관리자 화면에도, Firestore 에도 개인을 추정할 단서가 생기지 않는다.
                     // 응답 자체는 survey_responses 에 그대로 있어 전사 통계에는 반영된다.
                     if(teamResponses.length < PULSE_MIN_N) {
-                        await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
-                            responseCount: teamResponses.length,
-                            status: teamResponses.length === 0 ? '양호' : '표본부족',
-                            workload: '적정',
-                            conflict: '낮음',
-                            leadership: '보통',
-                            diagnosisScores: {},
-                            diagnosisDrivers: [],
-                            keywords: [],
-                            calculatedAt: serverTimestamp()
-                        });
+                        await setDoc(statRef(team.id), blankStat(team.id, teamResponses.length));
                         return;
                     }
 
@@ -456,7 +444,9 @@
                     if (diagnosisDrivers.length >= 3 || diagnosisScores.engagement <= 2.2) newStatus = '심각';
                     else if (diagnosisDrivers.length > 0) newStatus = '위험';
 
-                    await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', team.id), {
+                    await setDoc(statRef(team.id), {
+                        teamId: team.id,
+                        period,
                         responseCount: tc,
                         status: newStatus,
                         workload: diagnosisScores.workload <= 2.5 ? '과부하' : '적정',
@@ -1101,7 +1091,7 @@
                                 <span className="font-bold">게시판 글은 내용만으로 신원이 드러날 수 있습니다.</span> 시스템은 신원을 수집하지 않지만, 날짜·부서·상황을 자세히 적으시면 내용만으로 특정될 수 있습니다. 필요한 만큼만 적어주세요.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">게시판 글은 같은 브라우저에서만 삭제할 수 있습니다.</span> 익명 유지를 위해 작성자 정보를 저장하지 않기 때문입니다.
+                                <span className="font-bold">게시판 글은 쓰신 브라우저에서만 삭제할 수 있습니다.</span> 익명 유지를 위해 작성자 정보를 저장하지 않고, 대신 글을 쓴 브라우저만 본인임을 증명할 수 있게 해두었기 때문입니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
@@ -1340,13 +1330,18 @@
                 alert("신고가 접수되었습니다.");
             };
 
+            // 삭제는 서버 함수가 맡는다. 함수가 호출자 uid 로 익명 태그를 다시 계산해
+            // 작성자 본인인지 확인하므로, 화면 코드를 고쳐도 남의 글은 지울 수 없다.
             const removePost = async (post) => {
                 if (!confirm("이 글을 삭제하시겠습니까? 삭제된 글은 복구할 수 없습니다.")) return;
-                for (const c of comments) {
-                    await window.firestore.deleteDoc(ref('board_comments', c.id));
+                try {
+                    await window.callFn('deleteBoardPost', { postId: post.id });
+                    setSelectedId(null);
+                } catch (e) {
+                    alert(e.code === 'functions/permission-denied'
+                        ? "본인이 쓴 글만 삭제할 수 있습니다."
+                        : "삭제 실패: " + (e.message || e));
                 }
-                await window.firestore.deleteDoc(ref('board_posts', post.id));
-                setSelectedId(null);
             };
 
             // 해제는 관리자가 신고 누적 결과를 뒤집는 행위라, 플래그를 내리는 것만으로는
@@ -1359,12 +1354,12 @@
 
             const removeComment = async (comment) => {
                 if (!confirm("이 댓글을 삭제하시겠습니까?")) return;
-                await window.firestore.deleteDoc(ref('board_comments', comment.id));
-                const post = posts.find(x => x.id === comment.postId);
-                if (post) {
-                    await window.firestore.updateDoc(ref('board_posts', post.id), {
-                        commentCount: window.firestore.increment(-1)
-                    });
+                try {
+                    await window.callFn('deleteBoardComment', { commentId: comment.id });
+                } catch (e) {
+                    alert(e.code === 'functions/permission-denied'
+                        ? "본인이 쓴 댓글만 삭제할 수 있습니다."
+                        : "삭제 실패: " + (e.message || e));
                 }
             };
 
@@ -2415,81 +2410,113 @@
             );
         };
 
+        // 팀 목록은 조직 구조다. 기간별 진단 결과(team_stats)와 분리해 teams 에 둔다.
+        // 예전에는 둘이 한 문서에 섞여 있어, 달이 바뀌면 팀 목록까지 사라지고
+        // 구성원이 소속 부서를 고를 수 없어 진단 제출 자체가 막혔다.
         const TeamManagementView = ({ teamStats, currentPeriod }) => {
-            const [formData, setFormData] = useState({ name: '', workload: '적정', conflict: '낮음', leadership: '보통', status: '양호', keywords: [] });
-            const [isEditing, setIsEditing] = useState(null);
-            const [importing, setImporting] = useState(false);
+            const [name, setName] = useState('');
+            const [migrating, setMigrating] = useState(false);
+            const [legacyNames, setLegacyNames] = useState(null);   // null = 아직 확인 전
 
-            // 팀 목록은 기간마다 따로 등록된다. 달이 바뀌면 목록이 비고, 그때까지
-            // 구성원은 부서를 고를 수 없어 진단을 제출하지 못한다.
-            // 매달 손으로 다시 입력하게 두면 반드시 빠뜨리는 달이 생기므로,
-            // 지난 기간 목록을 그대로 가져오는 길을 둔다(점수는 새로 시작한다).
-            const importPreviousTeams = async () => {
-                const { collection, addDoc, getDocs, serverTimestamp } = window.firestore;
-                setImporting(true);
+            const teamsCol = () => window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'teams');
+
+            // 구조를 바꾸기 전에 team_stats 에 이름으로 들어 있던 팀들을 한 번만 옮겨준다.
+            useEffect(() => {
+                if (!window.db || teamStats.length > 0) { setLegacyNames(null); return; }
+                let alive = true;
+                (async () => {
+                    try {
+                        const snap = await window.firestore.getDocs(
+                            window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'));
+                        const names = [...new Set(snap.docs.map(d => d.data().name).filter(Boolean))];
+                        if (alive) setLegacyNames(names);
+                    } catch (e) { console.error(e); }
+                })();
+                return () => { alive = false; };
+            }, [teamStats.length]);
+
+            const migrateLegacy = async () => {
+                if (!legacyNames || legacyNames.length === 0) return;
+                if (!confirm(`예전 기간에 등록돼 있던 팀 ${legacyNames.length}개를 옮깁니다.\n\n${legacyNames.join(', ')}`)) return;
+                setMigrating(true);
                 try {
-                    const snap = await getDocs(collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'));
-                    const rows = snap.docs.map(d => d.data());
-                    const past = [...new Set(rows.map(r => r.period).filter(x => x && x < currentPeriod))].sort();
-                    const latest = past[past.length - 1];
-                    if (!latest) return alert("가져올 지난 기간의 팀 목록이 없습니다.");
-
-                    const names = [...new Set(rows.filter(r => r.period === latest).map(r => r.name).filter(Boolean))];
-                    if (names.length === 0) return alert(`${latest} 에도 등록된 팀이 없습니다.`);
-                    if (!confirm(`${latest} 의 팀 ${names.length}개를 ${currentPeriod} 로 가져옵니다.\n\n${names.join(', ')}`)) return;
-
-                    await Promise.all(names.map(name => addDoc(
-                        collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'),
-                        {
-                            name, period: currentPeriod,
-                            workload: '적정', conflict: '낮음', leadership: '보통', status: '양호',
-                            keywords: [], diagnosisScores: {}, diagnosisDrivers: [], responseCount: 0,
-                            createdAt: serverTimestamp()
-                        }
-                    )));
-                    alert(`팀 ${names.length}개를 가져왔습니다. 이제 구성원이 진단에 참여할 수 있습니다.`);
+                    await Promise.all(legacyNames.map(n => window.firestore.addDoc(teamsCol(), {
+                        name: n, createdAt: window.firestore.serverTimestamp()
+                    })));
+                    alert(`팀 ${legacyNames.length}개를 옮겼습니다. 이제 기간과 무관하게 유지됩니다.`);
                 } catch (e) {
-                    console.error(e);
-                    alert("가져오기 실패: " + e.message);
+                    alert("이전 실패: " + e.message);
                 } finally {
-                    setImporting(false);
+                    setMigrating(false);
                 }
             };
-            
-            const handleSave = async (e) => { 
-                e.preventDefault(); 
-                const { collection, addDoc, doc, updateDoc, serverTimestamp } = window.firestore; 
-                const data = { ...formData, period: currentPeriod, createdAt: serverTimestamp() }; 
-                if (isEditing) await updateDoc(doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', isEditing), formData); 
-                else await addDoc(collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'), data); 
-                setFormData({ name: '', workload: '적정', conflict: '낮음', leadership: '보통', status: '양호', keywords: [] }); 
-                setIsEditing(null); 
+
+            const handleSave = async (e) => {
+                e.preventDefault();
+                const v = name.trim();
+                if (!v) return;
+                if (teamStats.some(t => t.name === v)) return alert("같은 이름의 팀이 이미 있습니다.");
+                await window.firestore.addDoc(teamsCol(), { name: v, createdAt: window.firestore.serverTimestamp() });
+                setName('');
             };
-            const handleDelete = async (id) => window.firestore.deleteDoc(window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats', id));
-            
+
+            // 팀을 지우면 그 팀으로 제출된 지난 진단 결과가 어디에도 붙지 않는다.
+            // 조직 개편으로 팀이 없어지는 일은 있으므로 막지는 않되, 무슨 일이 생기는지 알린다.
+            const handleDelete = async (t) => {
+                if (!confirm(`'${t.name}' 을 목록에서 지웁니다.\n\n이미 제출된 진단 응답은 남지만, 이 팀 이름으로는 더 이상 집계되지 않습니다.`)) return;
+                await window.firestore.deleteDoc(
+                    window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'teams', t.id));
+            };
+
             return (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 fade-in">
-                    <h2 className="text-lg font-bold text-slate-800 mb-2">팀 데이터 관리</h2>
-                    {/* 단순 안내문은 중립색으로 — 레드는 오류/경고에만 쓴다. */}
-                    <p className="text-sm text-slate-500 mb-4 font-medium">현재 선택된 기간: <span className="font-bold text-slate-700">{currentPeriod}</span> 에 데이터를 추가합니다.</p>
+                    <h2 className="text-lg font-bold text-slate-800 mb-2">팀/조직 관리</h2>
+                    <p className="text-sm text-slate-500 mb-5 font-medium">
+                        팀 목록은 기간과 무관하게 유지됩니다. 달이 바뀌어도 다시 등록하실 필요가 없습니다.
+                        <span className="block text-xs text-slate-400 mt-1">아래 상태·키워드는 현재 조회 기간({currentPeriod})의 진단 결과입니다.</span>
+                    </p>
 
                     {teamStats.length === 0 && (
                         <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-5 flex items-start gap-3 flex-wrap">
                             <Icon name="alert-circle" size={18} className="text-red-600 mt-0.5 flex-shrink-0" />
                             <div className="flex-1 min-w-[240px]">
-                                <p className="font-bold text-slate-800 text-sm">{currentPeriod} 에 등록된 팀이 없습니다</p>
+                                <p className="font-bold text-slate-800 text-sm">등록된 팀이 없습니다</p>
                                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                                     팀 목록이 비어 있으면 구성원이 소속 부서를 고를 수 없어 조직 진단을 제출하지 못합니다.
-                                    아래에서 직접 추가하시거나, 지난 기간 목록을 그대로 가져오세요.
+                                    아래에서 추가해주세요.
                                 </p>
                             </div>
-                            <button onClick={importPreviousTeams} disabled={importing} className="bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-700 disabled:opacity-40 transition-colors whitespace-nowrap">
-                                {importing ? "가져오는 중" : "지난 기간 팀 목록 가져오기"}
-                            </button>
+                            {legacyNames && legacyNames.length > 0 && (
+                                <button onClick={migrateLegacy} disabled={migrating} className="bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-700 disabled:opacity-40 transition-colors whitespace-nowrap">
+                                    {migrating ? "옮기는 중" : `예전 팀 ${legacyNames.length}개 옮기기`}
+                                </button>
+                            )}
                         </div>
                     )}
-                    <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6 bg-slate-50 p-4 rounded-lg"><input placeholder="팀명" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="md:col-span-2 border p-2 rounded text-sm" required /><select value={formData.workload} onChange={e => setFormData({...formData, workload: e.target.value})} className="border p-2 rounded text-sm"><option value="적정">업무: 적정</option><option value="과부하">업무: 과부하</option></select><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="border p-2 rounded text-sm"><option value="양호">상태: 양호</option><option value="위험">상태: 위험</option></select><button className="bg-brand-600 text-white md:col-span-1 rounded font-bold text-sm">저장</button></form>
-                    <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3">{t.name}</td><td className="p-3"><Badge type={t.status === '위험' || t.status === '심각' ? 'critical' : t.status === '표본부족' ? 'neutral' : 'good'} text={t.status} /></td><td className="p-3 text-xs text-slate-500">{t.keywords ? t.keywords.join(", ") : "-"}</td><td className="p-3"><button onClick={() => handleDelete(t.id)} className="text-red-500 text-xs">삭제</button></td></tr>))}</tbody></table></div>
+
+                    <form onSubmit={handleSave} className="flex gap-2 mb-6 bg-slate-50 p-4 rounded-lg flex-wrap">
+                        <input placeholder="팀명" value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-[200px] border border-slate-200 p-2.5 rounded-lg text-sm bg-white focus:outline-none focus:border-brand-500" required />
+                        <button className="bg-brand-600 text-white px-5 py-2.5 rounded-lg font-bold text-sm hover:bg-brand-700 transition-colors">팀 추가</button>
+                    </form>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태 ({currentPeriod})</th><th className="p-3">응답</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead>
+                            <tbody>
+                                {teamStats.length === 0 ? (
+                                    <tr><td colSpan="5" className="p-8 text-center text-slate-500">등록된 팀이 없습니다.</td></tr>
+                                ) : teamStats.map(t => (
+                                    <tr key={t.id} className="border-b">
+                                        <td className="p-3 font-medium text-slate-800">{t.name}</td>
+                                        <td className="p-3"><Badge type={t.status === '위험' || t.status === '심각' ? 'critical' : t.status === '표본부족' ? 'neutral' : 'good'} text={t.status || '미집계'} /></td>
+                                        <td className="p-3 text-slate-500">{t.responseCount != null ? `${t.responseCount}명` : '-'}</td>
+                                        <td className="p-3 text-xs text-slate-500">{(t.keywords || []).length ? t.keywords.join(", ") : "-"}</td>
+                                        <td className="p-3"><button onClick={() => handleDelete(t)} className="text-red-500 text-xs font-bold hover:underline">삭제</button></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             );
         };
@@ -2867,15 +2894,31 @@
                     if (s.exists()) setGlobalMetrics(s.data());
                     else setGlobalMetrics(defaultMetrics); 
                 });
-                const teamQ = window.firestore.query(
-                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'),
-                    window.firestore.where("period", "==", currentPeriod)
+                // 팀 목록은 조직 구조라 기간이 없다(teams). 진단 결과만 기간을 갖는다(team_stats).
+                // 예전에는 둘이 한 문서에 섞여 있어, 달이 바뀌면 팀 목록까지 사라졌다.
+                let roster = [];
+                let periodStats = {};
+                const pushMerged = () => {
+                    // 화면들이 쓰는 모양(id·name·status·diagnosisScores…)은 그대로 유지한다.
+                    const merged = roster.map(t => ({ ...(periodStats[t.id] || {}), id: t.id, name: t.name }));
+                    merged.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
+                    setTeamStats(merged);
+                };
+                const unsubRoster = window.firestore.onSnapshot(
+                    window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'teams'),
+                    (s) => { roster = s.docs.map(d => ({ id: d.id, ...d.data() })); pushMerged(); }
                 );
-                const unsubTeams = window.firestore.onSnapshot(teamQ, (s) => {
-                    const teams = s.docs.map(d => ({ id: d.id, ...d.data() }));
-                    teams.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-                    setTeamStats(teams);
-                });
+                const unsubTeams = window.firestore.onSnapshot(
+                    window.firestore.query(
+                        window.firestore.collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'),
+                        window.firestore.where("period", "==", currentPeriod)
+                    ),
+                    (s) => {
+                        periodStats = {};
+                        s.docs.forEach(d => { const v = d.data(); if (v.teamId) periodStats[v.teamId] = v; });
+                        pushMerged();
+                    }
+                );
                 const chartRef = window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'chart_stats', 'current');
                 const unsubChart = window.firestore.onSnapshot(chartRef, (s) => {
                     if (s.exists()) setChartData(s.data());
@@ -2897,7 +2940,7 @@
                         });
                     });
                 }
-                return () => { unsubMetrics(); unsubTeams(); unsubChart(); unsubAiConfig(); };
+                return () => { unsubMetrics(); unsubTeams(); unsubRoster(); unsubChart(); unsubAiConfig(); };
             }, [currentPeriod, user, role]);
             
             const handleAdminSuccess = () => { setRole('admin'); };
