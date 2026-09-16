@@ -44,8 +44,8 @@ service cloud.firestore {
       function isSurvey() { return collection == 'survey_responses'; }
 
       // ── AI 설정 ───────────────────────────────────────────────
-      // API 키가 들어 있다. 관리자 외에는 읽을 수 없다.
-      function isSecret() { return collection == 'app_settings'; }
+      // app_settings 에는 AI API 키가 들어 있다. 아래 어떤 규칙에도 이름이
+      // 나오지 않으므로, 관리자는 isAdmin() 으로 닿고 그 외에는 기본 거부다.
 
       // ── 게시판 ────────────────────────────────────────────────
       function isBoard() { return collection in ['board_posts', 'board_comments']; }
