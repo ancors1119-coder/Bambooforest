@@ -28,12 +28,18 @@ uid 와 함께 해시한 `authorTag` 만 남는다. 덕분에 같은 사람이 �
 
 ## 배포
 
-저장소 루트에서:
+저장소 루트에서 (.firebaserc 가 있어 --project 는 필요 없다):
 
 ```
-firebase use hr-manager-6635c
 cd functions && npm install && cd ..
 firebase deploy --only functions
+```
+
+배포 뒤 한 번은 정리 정책을 걸어둔다. 배포할 때마다 컨테이너 이미지가
+Artifact Registry 에 쌓여 매달 조금씩 과금되는 것을 막아준다.
+
+```
+firebase functions:artifacts:setpolicy
 ```
 
 처음 배포할 때는 필요한 API(Cloud Functions, Cloud Build, Artifact Registry)를
@@ -50,6 +56,11 @@ firebase deploy --only firestore:rules,firestore:indexes
 1. 게시판에 글을 쓰고 **본인 글 삭제** → 지워지면 정상
 2. 브라우저 콘솔(F12)에서 남의 글 삭제를 시도 → `permission-denied` 가 나오면 정상
 3. 관리자로 로그인해 아무 글이나 삭제 → 지워지면 정상
+
+## 런타임
+
+Node 22 를 쓴다. Node 20 은 2026-10-30 에 폐기되어 그 뒤로는 배포 자체가
+막히므로, 그 전에 올려두었다.
 
 ## 주의
 

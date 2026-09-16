@@ -2,7 +2,9 @@
   "name": "bambooforest-functions",
   "description": "엔코스 대나무숲 게시판 삭제 함수",
   "main": "index.js",
-  "engines": { "node": "20" },
+  "engines": {
+    "node": "22"
+  },
   "dependencies": {
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^6.1.0"
