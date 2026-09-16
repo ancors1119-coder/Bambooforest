@@ -3060,6 +3060,9 @@
         // 구성원이 소속 부서를 고를 수 없어 진단 제출 자체가 막혔다.
         const TeamManagementView = ({ teamStats, currentPeriod }) => {
             const [name, setName] = useState('');
+            const [editingId, setEditingId] = useState(null);   // 지금 이름을 고치는 중인 팀
+            const [editName, setEditName] = useState('');
+            const [saving, setSaving] = useState(false);
             const [migrating, setMigrating] = useState(false);
             const [legacyNames, setLegacyNames] = useState(null);   // null = 아직 확인 전
 
@@ -3096,13 +3099,42 @@
                 }
             };
 
+            const nameTaken = (v, exceptId) =>
+                teamStats.some(t => t.id !== exceptId && t.name === v);
+
             const handleSave = async (e) => {
                 e.preventDefault();
                 const v = name.trim();
                 if (!v) return;
-                if (teamStats.some(t => t.name === v)) return alert("같은 이름의 팀이 이미 있습니다.");
+                if (nameTaken(v)) return alert("같은 이름의 팀이 이미 있습니다.");
                 await window.firestore.addDoc(teamsCol(), { name: v, createdAt: window.firestore.serverTimestamp() });
                 setName('');
+            };
+
+            const startEdit = (t) => { setEditingId(t.id); setEditName(t.name); };
+            const cancelEdit = () => { setEditingId(null); setEditName(''); };
+
+            // 이름만 바꾼다. 진단 응답과 집계는 팀 이름이 아니라 이 문서의 id 를
+            // 물고 있으므로, 이름을 고쳐도 지난 결과가 그대로 새 이름으로 따라온다.
+            // 삭제와 달리 잃는 데이터가 없어 확인 절차를 두지 않는다.
+            const commitEdit = async () => {
+                const v = editName.trim();
+                if (!v || saving) return;
+                const target = teamStats.find(t => t.id === editingId);
+                if (!target) return cancelEdit();
+                if (v === target.name) return cancelEdit();
+                if (nameTaken(v, editingId)) return alert("같은 이름의 팀이 이미 있습니다.");
+                setSaving(true);
+                try {
+                    await window.firestore.updateDoc(
+                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'teams', editingId),
+                        { name: v });
+                    cancelEdit();
+                } catch (e) {
+                    alert("이름 변경 실패: " + e.message);
+                } finally {
+                    setSaving(false);
+                }
             };
 
             // 팀을 지우면 그 팀으로 제출된 지난 진단 결과가 어디에도 붙지 않는다.
@@ -3152,11 +3184,36 @@
                                     <tr><td colSpan="5" className="p-8 text-center text-slate-500">등록된 팀이 없습니다.</td></tr>
                                 ) : teamStats.map(t => (
                                     <tr key={t.id} className="border-b">
-                                        <td className="p-3 font-medium text-slate-800">{t.name}</td>
+                                        <td className="p-3 font-medium text-slate-800">
+                                            {editingId === t.id ? (
+                                                <input
+                                                    value={editName}
+                                                    onChange={e => setEditName(e.target.value)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                                                        if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                                                    }}
+                                                    className="w-full min-w-[160px] border border-brand-400 px-2.5 py-1.5 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-200"
+                                                    autoFocus
+                                                />
+                                            ) : t.name}
+                                        </td>
                                         <td className="p-3"><Badge type={t.status === '위험' || t.status === '심각' ? 'critical' : t.status === '표본부족' ? 'neutral' : 'good'} text={t.status || '미집계'} /></td>
                                         <td className="p-3 text-slate-500">{t.responseCount != null ? `${t.responseCount}명` : '-'}</td>
                                         <td className="p-3 text-xs text-slate-500">{(t.keywords || []).length ? t.keywords.join(", ") : "-"}</td>
-                                        <td className="p-3"><button onClick={() => handleDelete(t)} className="text-red-500 text-xs font-bold hover:underline">삭제</button></td>
+                                        <td className="p-3">
+                                            {editingId === t.id ? (
+                                                <span className="flex items-center gap-2 whitespace-nowrap">
+                                                    <button onClick={commitEdit} disabled={saving || !editName.trim()} className="bg-brand-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-brand-700 disabled:opacity-40 transition-colors">{saving ? "저장 중" : "저장"}</button>
+                                                    <button onClick={cancelEdit} className="text-slate-500 text-xs font-bold hover:underline">취소</button>
+                                                </span>
+                                            ) : (
+                                                <span className="flex items-center gap-3 whitespace-nowrap">
+                                                    <button onClick={() => startEdit(t)} className="text-brand-600 text-xs font-bold hover:underline">수정</button>
+                                                    <button onClick={() => handleDelete(t)} className="text-red-500 text-xs font-bold hover:underline">삭제</button>
+                                                </span>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
