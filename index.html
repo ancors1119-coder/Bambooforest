@@ -619,7 +619,7 @@
         //
         // 카카오톡은 프로필이 그대로 보이는 '기명' 창구다. 이름을 밝히기 어려운
         // 이야기는 대나무숲 게시판이 받고, 두 창구의 차이를 화면에서 분명히 알린다.
-        const KAKAO_CHANNEL_URL = 'https://pf.kakao.com/_kGxhxnX/chat';
+        const KAKAO_CHANNEL_URL = 'https://pf.kakao.com/_kGxhxnX';
 
         const PULSE_FIELDS = [
             { id: 'workload', label: '업무부하', desc: '업무량과 마감이 감당 가능한 수준입니다.', category: 'env' },
@@ -1227,7 +1227,7 @@
                         <div className="flex flex-wrap gap-2 mt-6">
                             <a href={KAKAO_CHANNEL_URL} target="_blank" rel="noopener noreferrer"
                                className="bg-[#FEE500] text-[#3C1E1E] px-5 py-3 rounded-xl text-sm font-bold hover:brightness-95 transition-all flex items-center gap-2 border border-yellow-300">
-                                <Icon name="message-circle" size={16} /> 카카오톡 채널로 접수하기
+                                <Icon name="message-circle" size={16} /> 카톡 채널 바로가기
                             </a>
                         </div>
                     </div>
@@ -1318,7 +1318,7 @@
             ];
 
             const steps = [
-                { n: '1', title: '카카오톡 채널 열기', desc: '‘고충 접수’ 메뉴의 버튼을 누르면 사내 카카오톡 채널로 연결됩니다. 별도 양식은 없습니다.' },
+                { n: '1', title: '카카오톡 채널 열기', desc: '‘고충 접수’ 메뉴의 버튼을 누르면 사내 카카오톡 채널로 연결됩니다. 채널에서 ‘채팅하기’를 누르면 담당자와의 대화가 열립니다.' },
                 { n: '2', title: '상황 남기기', desc: '언제, 어떤 일이 있었고, 어떤 조치를 바라시는지 적어주세요. 담당자가 확인 후 답변드립니다.' },
                 { n: '3', title: '담당자 확인', desc: '검토 → 조사 → 조치 순으로 진행되며, 필요하면 담당자가 추가로 질문합니다.' },
                 { n: '4', title: '결과 확인', desc: '진행 상황과 결과는 같은 카카오톡 대화에서 그대로 받아보실 수 있습니다.' }
