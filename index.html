@@ -286,10 +286,30 @@
             transform: translateY(-2px);
         }
 
+        /* ── 게시판 배경의 잎 ────────────────────────────────────────
+           화면에 고정돼 있어 목록을 굴려도 제자리에 떠 있다. 글을 읽는
+           데 걸리면 안 되므로 투명도는 0.1 을 넘기지 않는다. */
+        .leaf-field {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .leaf-field > span {
+            position: absolute;
+            color: var(--brand-600);
+            animation: leafDrift var(--dur) ease-in-out var(--delay) infinite alternate;
+        }
+        @keyframes leafDrift {
+            from { transform: translate3d(0, 0, 0) rotate(var(--rot)); }
+            to   { transform: translate3d(var(--dx), var(--dy), 0) rotate(calc(var(--rot) + 14deg)); }
+        }
+
         /* 움직임을 원치 않는 사용자에게는 전부 멈춘다. */
         @media (prefers-reduced-motion: reduce) {
             body::after, .post-enter, .pop, .sway, .hero-leaf,
-            .live-dot::after { animation: none !important; }
+            .leaf-field > span, .live-dot::after { animation: none !important; }
             .post-card, .lift, .write-prompt, .sidebar-item, .nav-icon { transition: none !important; }
             /* 바는 animation 으로 자라므로, 끌 때는 최종 상태를 직접 준다. */
             .sidebar-item.active::before {
@@ -1387,6 +1407,32 @@
         // 색도 글마다 달라진다. 같은 사람이 쓴 글이라도 묶이지 않는다.
         const tagHue = (tag) => parseInt(String(tag || '0').slice(0, 4), 16) % 360;
         const tagName = (tag) => `익명 ${String(tag || '').slice(0, 4) || '----'}`;
+
+        // 게시판 배경에 띄우는 잎. 좌측 메뉴(256px)에 가리지 않도록
+        // 가로 위치는 넉넉히 안쪽부터 잡는다.
+        const BOARD_LEAVES = [
+            { top: '6%',  left: '23%', size: 118, opacity: .075, rot: -22, dx: '20px',  dy: '-26px', dur: '27s', delay: '0s' },
+            { top: '31%', left: '90%', size: 92,  opacity: .065, rot: 28,  dx: '-18px', dy: '22px',  dur: '33s', delay: '-7s' },
+            { top: '58%', left: '30%', size: 64,  opacity: .055, rot: 8,   dx: '16px',  dy: '18px',  dur: '24s', delay: '-3s' },
+            { top: '73%', left: '78%', size: 134, opacity: .07,  rot: -14, dx: '-22px', dy: '-20px', dur: '36s', delay: '-12s' },
+            { top: '14%', left: '62%', size: 52,  opacity: .05,  rot: 40,  dx: '14px',  dy: '24px',  dur: '29s', delay: '-18s' },
+            { top: '88%', left: '44%', size: 78,  opacity: .06,  rot: -34, dx: '18px',  dy: '-16px', dur: '31s', delay: '-9s' },
+            { top: '45%', left: '55%', size: 44,  opacity: .045, rot: 16,  dx: '-14px', dy: '-22px', dur: '22s', delay: '-15s' }
+        ];
+
+        const LeafField = () => (
+            <div className="leaf-field" aria-hidden="true">
+                {BOARD_LEAVES.map((l, i) => (
+                    <span key={i} style={{
+                        top: l.top, left: l.left, opacity: l.opacity,
+                        '--rot': `${l.rot}deg`, '--dx': l.dx, '--dy': l.dy,
+                        '--dur': l.dur, '--delay': l.delay
+                    }}>
+                        <BambooLeaf size={l.size} />
+                    </span>
+                ))}
+            </div>
+        );
 
         const BambooLeaf = ({ size = 16, className = '' }) => (
             <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
@@ -3305,6 +3351,7 @@
 
             return (
                 <div className="flex min-h-screen">
+                    {currentView === 'board' && <LeafField />}
                     <Sidebar 
                         currentView={currentView} 
                         setView={setCurrentView} 
