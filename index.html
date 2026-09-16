@@ -130,6 +130,168 @@
 
         ::selection { background: var(--brand-200); color: var(--brand-700); }
 
+        /* ── 배경: 대나무 줄기 ───────────────────────────────────────
+           이름값을 화면에서도 하게 만든다. 다만 익명으로 어려운 이야기를
+           꺼내는 곳이라, 눈에 띄면 안 된다. 세로 줄기를 거의 보이지 않을
+           만큼만 깔고, 그 위로 빛이 아주 느리게 흐르게 한다. */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background-image:
+                repeating-linear-gradient(90deg,
+                    transparent 0 86px,
+                    rgba(96, 82, 82, 0.030) 86px 88px,
+                    rgba(96, 82, 82, 0.014) 88px 92px,
+                    transparent 92px 168px),
+                repeating-linear-gradient(90deg,
+                    transparent 0 213px,
+                    rgba(96, 82, 82, 0.020) 213px 216px,
+                    transparent 216px 431px);
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            inset: -20%;
+            z-index: -1;
+            pointer-events: none;
+            background-image:
+                radial-gradient(38% 42% at 22% 18%, rgba(217, 43, 43, 0.055), transparent 70%),
+                radial-gradient(34% 38% at 82% 72%, rgba(217, 43, 43, 0.040), transparent 70%);
+            animation: drift 34s ease-in-out infinite alternate;
+        }
+        @keyframes drift {
+            from { transform: translate3d(0, 0, 0) scale(1); }
+            to   { transform: translate3d(2.5%, -2%, 0) scale(1.08); }
+        }
+
+        /* ── 게시판 카드 ─────────────────────────────────────────────
+           말머리마다 색을 다르게 주되, 채도는 낮춘다. 레드는 브랜드색이자
+           위험색이라 '칭찬' 하나에만 쓴다. */
+        .cat-free       { --cat: #6b7a8f; --cat-bg: #eef1f5; }
+        .cat-suggestion { --cat: #a86a1f; --cat-bg: #fbf2e4; }
+        .cat-praise     { --cat: #c0392b; --cat-bg: #fdeceb; }
+        .cat-question   { --cat: #5b5ba8; --cat-bg: #eeeef8; }
+
+        .post-card {
+            position: relative;
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            transition: transform .2s cubic-bezier(.2,.7,.3,1),
+                        box-shadow .2s ease,
+                        border-color .2s ease;
+        }
+        /* 좌측 레일이 말머리 색을 들고 있다가, 올려두면 넓어진다. */
+        .post-card::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 3px;
+            background: var(--cat, var(--brand-600));
+            opacity: .55;
+            transition: width .2s cubic-bezier(.2,.7,.3,1), opacity .2s ease;
+        }
+        .post-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 28px -12px rgba(60, 40, 40, .28);
+            border-color: color-mix(in srgb, var(--cat, var(--brand-600)) 32%, var(--line));
+        }
+        .post-card:hover::before { width: 5px; opacity: 1; }
+        .post-card:active { transform: translateY(0); }
+
+        .cat-chip {
+            color: var(--cat);
+            background: var(--cat-bg);
+            border: 1px solid color-mix(in srgb, var(--cat) 18%, transparent);
+        }
+
+        /* 익명 표식. 글마다 다른 authorTag 에서 색을 뽑으므로, 같은 사람이
+           써도 글끼리 색이 달라진다. 익명성 설계를 그대로 시각화한 것이다. */
+        .anon-badge {
+            width: 30px; height: 30px;
+            border-radius: 10px;
+            display: grid; place-items: center;
+            flex-shrink: 0;
+            color: #fff;
+            background: linear-gradient(140deg,
+                hsl(var(--h) 42% 58%),
+                hsl(calc(var(--h) + 28) 38% 46%));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.35);
+        }
+
+        /* 카드가 차례로 올라온다. 한꺼번에 나타나면 목록이 '툭' 하고 바뀐다. */
+        .post-enter { animation: postIn .34s cubic-bezier(.2,.7,.3,1) backwards; }
+        @keyframes postIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 공감을 누르면 살짝 튄다. */
+        .pop { animation: pop .34s cubic-bezier(.2,.7,.3,1); }
+        @keyframes pop {
+            0%   { transform: scale(1); }
+            35%  { transform: scale(1.18); }
+            100% { transform: scale(1); }
+        }
+
+        /* 빈 게시판에서 잎이 아주 천천히 흔들린다. */
+        .sway { animation: sway 5.5s ease-in-out infinite; transform-origin: 50% 90%; }
+        @keyframes sway {
+            0%, 100% { transform: rotate(-5deg); }
+            50%      { transform: rotate(5deg); }
+        }
+
+        .lift { transition: transform .18s ease, box-shadow .18s ease; }
+        .lift:hover { transform: translateY(-1px); }
+        .lift:active { transform: translateY(0); }
+
+        /* ── 게시판 머리말 ───────────────────────────────────────────
+           흰 카드가 흰 배경 위에 있어 경계가 흐렸다. 옅은 브랜드
+           그라데이션과 천천히 떠다니는 잎으로 '숲'의 인상을 준다. */
+        .board-hero {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            background:
+                radial-gradient(120% 140% at 88% -12%, rgba(217, 43, 43, 0.10), transparent 58%),
+                linear-gradient(135deg, #ffffff 0%, var(--brand-50) 62%, #fff8f5 100%);
+        }
+        .hero-leaf {
+            position: absolute;
+            color: var(--brand-600);
+            opacity: .085;
+            pointer-events: none;
+            animation: floaty 13s ease-in-out infinite;
+        }
+        @keyframes floaty {
+            0%, 100% { transform: translate3d(0, 0, 0) rotate(-8deg); }
+            50%      { transform: translate3d(-9px, -14px, 0) rotate(9deg); }
+        }
+
+        /* 글이 몇 건 없을 때 목록 아래가 휑해 보이지 않도록 자리를 채운다. */
+        .write-prompt {
+            border: 1.5px dashed color-mix(in srgb, var(--brand-600) 26%, var(--line));
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(255, 245, 245, .55), rgba(255, 255, 255, .35));
+            transition: border-color .2s ease, background .2s ease,
+                        transform .2s cubic-bezier(.2,.7,.3,1);
+        }
+        .write-prompt:hover {
+            border-color: var(--brand-600);
+            background: linear-gradient(180deg, rgba(255, 240, 240, .85), rgba(255, 255, 255, .6));
+            transform: translateY(-2px);
+        }
+
+        /* 움직임을 원치 않는 사용자에게는 전부 멈춘다. */
+        @media (prefers-reduced-motion: reduce) {
+            body::after, .post-enter, .pop, .sway, .hero-leaf { animation: none !important; }
+            .post-card, .lift, .write-prompt { transition: none !important; }
+        }
+
         /* ── 사이드바 ────────────────────────────────────────────────── */
         .sidebar-item {
             position: relative;
@@ -1143,6 +1305,20 @@
 
         const getBoardCategory = (value) => BOARD_CATEGORIES.find(c => c.value === value) || BOARD_CATEGORIES[0];
 
+        // 익명 표식의 색은 글의 authorTag 에서 뽑는다. 태그가 글마다 다르므로
+        // 색도 글마다 달라진다. 같은 사람이 쓴 글이라도 묶이지 않는다.
+        const tagHue = (tag) => parseInt(String(tag || '0').slice(0, 4), 16) % 360;
+        const tagName = (tag) => `익명 ${String(tag || '').slice(0, 4) || '----'}`;
+
+        const BambooLeaf = ({ size = 16, className = '' }) => (
+            <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+                <path d="M20 3c0 8.5-5 15-12.5 15C6 18 4.5 17.5 3.5 17 6 10 12 4.5 20 3Z"
+                      fill="currentColor" opacity=".9" />
+                <path d="M20 3C13.5 6.5 8.5 11.5 5 18" fill="none" stroke="#fff"
+                      strokeOpacity=".5" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+        );
+
         // 블라인드 여부는 저장된 플래그가 아니라 신고 배열에서 파생한다.
         // 두 사람이 동시에 신고해 임계치를 같이 넘기면, 플래그를 각자 계산해
         // 쓰는 방식에서는 아무도 켜지 못한 채 넘어가기 때문이다.
@@ -1246,6 +1422,18 @@
                 () => posts.filter(p => !isBlinded(p) || isAdmin || myTags[p.id] === p.authorTag),
                 [posts, isAdmin, myTags]
             );
+
+            // 머리말에 보여줄 숫자. 서버에서 가져온 '지금 목록'만 센다.
+            const boardStats = useMemo(() => {
+                const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+                const t0 = dayStart.getTime() / 1000;
+                let today = 0, likes = 0;
+                for (const p of visiblePosts) {
+                    if ((p.createdAt?.seconds || 0) >= t0) today++;
+                    likes += (p.likedBy || []).length;
+                }
+                return { total: visiblePosts.length, today, likes };
+            }, [visiblePosts]);
 
             const submitPost = async (e) => {
                 e.preventDefault();
@@ -1403,16 +1591,23 @@
                                     신고 누적으로 가려진 글입니다. {isAdmin ? "관리자에게만 보입니다." : ""}
                                 </div>
                             )}
-                            <div className="flex items-center gap-2 mb-3 flex-wrap">
-                                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100">{getBoardCategory(selected.category).label}</span>
-                                <span className="text-xs text-slate-400">{timeAgo(selected.createdAt)}</span>
-                                {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
+                            <div className={`flex items-center gap-3 mb-4 flex-wrap cat-${getBoardCategory(selected.category).value}`}>
+                                <span className="anon-badge" style={{ '--h': tagHue(selected.authorTag) }}>
+                                    <BambooLeaf size={16} />
+                                </span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="cat-chip px-2.5 py-0.5 rounded-full text-[11px] font-bold">{getBoardCategory(selected.category).label}</span>
+                                    <span className="text-xs text-slate-400 font-medium">{tagName(selected.authorTag)}</span>
+                                    <span className="text-slate-300 text-xs">·</span>
+                                    <span className="text-xs text-slate-400">{timeAgo(selected.createdAt)}</span>
+                                    {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
+                                </div>
                             </div>
                             <p className="text-[15px] text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{selected.content}</p>
 
                             <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-100 flex-wrap">
-                                <button onClick={() => toggleLike(selected)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold border transition-colors ${liked ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300 hover:text-brand-600'}`}>
-                                    <Icon name="heart" size={15} /> 공감 {(selected.likedBy || []).length}
+                                <button onClick={() => toggleLike(selected)} className={`lift flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold border transition-colors ${liked ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300 hover:text-brand-600'}`}>
+                                    <span key={liked ? 'on' : 'off'} className={liked ? 'pop' : ''}><Icon name="heart" size={15} /></span> 공감 {(selected.likedBy || []).length}
                                 </button>
                                 <span className="flex items-center gap-1.5 px-3 py-2 text-sm font-bold text-slate-500">
                                     <Icon name="message-circle" size={15} /> 댓글 {sorted.length}
@@ -1464,15 +1659,28 @@
             }
 
             // ── 목록 ─────────────────────────────────────────────────
+            const showWritePrompt = visiblePosts.length > 0 && visiblePosts.length < 3 && !composing;
             return (
                 <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
-                    <div className="bg-white rounded-2xl shadow-card border border-slate-100 p-5 md:p-7">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="board-hero rounded-2xl shadow-card p-5 md:p-7">
+                        <div aria-hidden="true">
+                            <span className="hero-leaf" style={{ top: '-14px', right: '28px', animationDelay: '0s' }}><BambooLeaf size={96} /></span>
+                            <span className="hero-leaf" style={{ bottom: '-28px', right: '136px', animationDelay: '-4.5s' }}><BambooLeaf size={62} /></span>
+                            <span className="hero-leaf" style={{ top: '46px', right: '206px', animationDelay: '-8.5s' }}><BambooLeaf size={38} /></span>
+                        </div>
+                        <div className="relative flex items-start justify-between gap-3 flex-wrap">
                             <div>
                                 <h1 className="text-xl md:text-2xl font-bold text-slate-800">대나무숲 게시판</h1>
                                 <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
                                     누구나 익명으로 쓰고 함께 읽는 공간입니다. 작성자 정보는 저장하지 않으며, 글마다 다른 익명 표식이 부여됩니다.
                                 </p>
+                                <div className="flex items-center gap-2.5 mt-3 text-xs text-slate-500">
+                                    <span>지금 보이는 글 <b className="text-slate-800">{boardStats.total}</b></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>오늘 <b className="text-brand-600">{boardStats.today}</b></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>받은 공감 <b className="text-slate-800">{boardStats.likes}</b></span>
+                                </div>
                                 {/* 관리자에게는 구성원용 화면으로 가는 링크가 되지 않는다(라우팅이 되돌린다) */}
                                 {setView && !isAdmin && (
                                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
@@ -1493,7 +1701,7 @@
                         </div>
 
                         {composing && (
-                            <form onSubmit={submitPost} className="mt-5 border-t border-slate-100 pt-5">
+                            <form onSubmit={submitPost} className="relative mt-5 border-t border-brand-100 pt-5">
                                 <div className="flex gap-2 mb-3 flex-wrap">
                                     {BOARD_CATEGORIES.map(c => (
                                         <button key={c.value} type="button" onClick={() => setDraft({ ...draft, category: c.value })} className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${draft.category === c.value ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200 hover:border-brand-300'}`}>{c.label}</button>
@@ -1523,36 +1731,70 @@
 
                     <div className="space-y-3">
                         {visiblePosts.length === 0 && (
-                            <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center">
-                                <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                    <Icon name="message-square" size={22} className="text-slate-400" />
+                            <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">
+                                <div className="w-14 h-14 rounded-2xl bg-brand-50 border border-brand-100 flex items-center justify-center mx-auto mb-4 text-brand-500">
+                                    <span className="sway"><BambooLeaf size={26} /></span>
                                 </div>
-                                <p className="text-slate-500 font-medium">아직 올라온 글이 없습니다.</p>
-                                <p className="text-xs text-slate-400 mt-1">첫 이야기를 남겨보세요.</p>
+                                <p className="text-slate-700 font-bold">아직 조용합니다</p>
+                                <p className="text-sm text-slate-500 mt-1.5">첫 이야기를 남겨보세요. 누가 썼는지는 아무도 모릅니다.</p>
                             </div>
                         )}
-                        {/* 카드 한 장이 1000px 넘게 늘어나면 빈 공간만 커진다. 넓은 화면에서는 2열로. */}
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                        {visiblePosts.map(post => {
+                        {/* 넓은 화면에서는 2열. 칸이 하나뿐이면 옆이 비어 허전하므로
+                            그때만 한 줄로 채운다. 글이 두세 건일 때는 마지막 칸에
+                            작성 유도 카드를 넣어 목록이 끊겨 보이지 않게 한다. */}
+                        <div className={`grid grid-cols-1 gap-3 ${visiblePosts.length + (showWritePrompt ? 1 : 0) > 1 ? 'xl:grid-cols-2' : ''}`}>
+                        {visiblePosts.map((post, i) => {
                             const myTag = myTags[post.id];
                             const mine = myTag && myTag === post.authorTag;
                             const liked = myTag && (post.likedBy || []).includes(myTag);
+                            const cat = getBoardCategory(post.category);
                             return (
-                                <button key={post.id} onClick={() => setSelectedId(post.id)} className="w-full text-left bg-white rounded-2xl border border-slate-100 shadow-sm p-5 hover:border-brand-300 transition-colors block">
-                                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-50 text-brand-700 border border-brand-100">{getBoardCategory(post.category).label}</span>
-                                        <span className="text-xs text-slate-400">{timeAgo(post.createdAt)}</span>
-                                        {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
-                                        {isBlinded(post) && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">블라인드</span>}
-                                    </div>
-                                    <p className="text-sm text-slate-700 leading-relaxed line-clamp-3 whitespace-pre-wrap break-words">{post.content}</p>
-                                    <div className="flex items-center gap-4 mt-3 text-xs font-bold text-slate-400">
-                                        <span className={`flex items-center gap-1 ${liked ? 'text-brand-600' : ''}`}><Icon name="heart" size={13} /> {(post.likedBy || []).length}</span>
-                                        <span className="flex items-center gap-1"><Icon name="message-circle" size={13} /> {post.commentCount || 0}</span>
+                                <button
+                                    key={post.id}
+                                    onClick={() => setSelectedId(post.id)}
+                                    style={{ animationDelay: `${Math.min(i, 9) * 45}ms` }}
+                                    className={`post-enter post-card cat-${cat.value} w-full text-left p-5 pl-6 block`}
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <span className="anon-badge" style={{ '--h': tagHue(post.authorTag) }}>
+                                            <BambooLeaf size={16} />
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="cat-chip px-2.5 py-0.5 rounded-full text-[11px] font-bold">{cat.label}</span>
+                                                <span className="text-xs text-slate-400 font-medium">{tagName(post.authorTag)}</span>
+                                                <span className="text-slate-300 text-xs">·</span>
+                                                <span className="text-xs text-slate-400">{timeAgo(post.createdAt)}</span>
+                                                {mine && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600">내 글</span>}
+                                                {isBlinded(post) && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-600 text-white">블라인드</span>}
+                                            </div>
+                                            <p className="text-[15px] text-slate-800 leading-relaxed line-clamp-3 whitespace-pre-wrap break-words mt-2">{post.content}</p>
+                                            <div className="flex items-center gap-4 mt-3.5 text-xs font-bold text-slate-400">
+                                                <span className={`flex items-center gap-1.5 ${liked ? 'text-brand-600' : ''}`}>
+                                                    <Icon name="heart" size={14} /> {(post.likedBy || []).length}
+                                                </span>
+                                                <span className="flex items-center gap-1.5">
+                                                    <Icon name="message-circle" size={14} /> {post.commentCount || 0}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </button>
                             );
                         })}
+                        {showWritePrompt && (
+                            <button onClick={() => setComposing(true)} className="post-enter write-prompt w-full text-left p-5 pl-6 block" style={{ animationDelay: `${Math.min(visiblePosts.length, 9) * 45}ms` }}>
+                                <div className="flex items-start gap-3">
+                                    <span className="w-[30px] h-[30px] rounded-[10px] grid place-items-center flex-shrink-0 bg-brand-50 border border-brand-100 text-brand-500">
+                                        <Icon name="pencil" size={15} />
+                                    </span>
+                                    <div className="min-w-0">
+                                        <p className="text-[15px] font-bold text-slate-700">여기에 당신의 이야기가 놓입니다</p>
+                                        <p className="text-sm text-slate-500 leading-relaxed mt-1.5">불편했던 일, 고마웠던 일, 물어보고 싶었던 것. 무엇이든 괜찮습니다. 이름은 남지 않습니다.</p>
+                                    </div>
+                                </div>
+                            </button>
+                        )}
 
                         </div>
 
