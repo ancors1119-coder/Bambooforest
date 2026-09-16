@@ -258,6 +258,14 @@
 
         const getFormattedPeriod = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
 
+        // 진단 응답은 이 기간에 묶여 저장된다. 구성원 화면에는 기간 선택이 없으므로,
+        // 여기에 고정값을 두면 몇 달치 응답이 한 칸에 전부 쌓인다.
+        // (실제로 '2026-02' 로 박혀 있어 9월에 낸 응답도 2월로 들어갔다)
+        const nowPeriod = () => {
+            const d = new Date();
+            return { year: String(d.getFullYear()), month: String(d.getMonth() + 1) };
+        };
+
         // ── 고충 접수 창구 ────────────────────────────────────────────
         // 고충 접수는 사내 카카오톡 채널에서 운영한다. 웹 접수 양식은 두지 않는다.
         //
@@ -725,6 +733,21 @@
                                         <div className="h-full bg-brand-500 rounded-full transition-all duration-300" style={{ width: `${pulseProgress.percent}%` }}></div>
                                     </div>
                                 </div>
+                                {/* 팀 목록은 기간별로 등록된다. 이번 기간 것이 없으면 부서를 고를 수 없어
+                                    제출 자체가 막히는데, 빈 드롭다운만 보이면 왜 안 되는지 알 수가 없다. */}
+                                {teamStats.length === 0 && (
+                                    <div className="bg-white border border-red-200 rounded-2xl p-6 text-center">
+                                        <div className="w-12 h-12 bg-red-50 border border-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <Icon name="alert-circle" size={22} className="text-red-600" />
+                                        </div>
+                                        <p className="font-bold text-slate-800">아직 진단을 시작할 수 없습니다</p>
+                                        <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
+                                            {currentPeriod} 의 부서 목록이 아직 등록되지 않았습니다.<br className="hidden md:block" />
+                                            담당자에게 알려주시면 바로 열립니다.
+                                        </p>
+                                    </div>
+                                )}
+                                {teamStats.length > 0 && (
                                 <form onSubmit={handleSurveySubmit} className="space-y-7 pb-20 md:pb-0">
                                     <div>
                                         <label className="block text-sm font-bold text-slate-700 mb-2">소속 부서</label>
@@ -826,6 +849,7 @@
                                         <button type="submit" className="w-full bg-brand-600 text-white py-4 rounded-xl font-bold hover:bg-brand-700 transition shadow-lg shadow-brand-200">익명 제출</button>
                                     </div>
                                 </form>
+                                )}
                             </div>
                         )}
                     </div>
@@ -2394,6 +2418,43 @@
         const TeamManagementView = ({ teamStats, currentPeriod }) => {
             const [formData, setFormData] = useState({ name: '', workload: '적정', conflict: '낮음', leadership: '보통', status: '양호', keywords: [] });
             const [isEditing, setIsEditing] = useState(null);
+            const [importing, setImporting] = useState(false);
+
+            // 팀 목록은 기간마다 따로 등록된다. 달이 바뀌면 목록이 비고, 그때까지
+            // 구성원은 부서를 고를 수 없어 진단을 제출하지 못한다.
+            // 매달 손으로 다시 입력하게 두면 반드시 빠뜨리는 달이 생기므로,
+            // 지난 기간 목록을 그대로 가져오는 길을 둔다(점수는 새로 시작한다).
+            const importPreviousTeams = async () => {
+                const { collection, addDoc, getDocs, serverTimestamp } = window.firestore;
+                setImporting(true);
+                try {
+                    const snap = await getDocs(collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'));
+                    const rows = snap.docs.map(d => d.data());
+                    const past = [...new Set(rows.map(r => r.period).filter(x => x && x < currentPeriod))].sort();
+                    const latest = past[past.length - 1];
+                    if (!latest) return alert("가져올 지난 기간의 팀 목록이 없습니다.");
+
+                    const names = [...new Set(rows.filter(r => r.period === latest).map(r => r.name).filter(Boolean))];
+                    if (names.length === 0) return alert(`${latest} 에도 등록된 팀이 없습니다.`);
+                    if (!confirm(`${latest} 의 팀 ${names.length}개를 ${currentPeriod} 로 가져옵니다.\n\n${names.join(', ')}`)) return;
+
+                    await Promise.all(names.map(name => addDoc(
+                        collection(window.db, 'artifacts', APP_ID, 'public', 'data', 'team_stats'),
+                        {
+                            name, period: currentPeriod,
+                            workload: '적정', conflict: '낮음', leadership: '보통', status: '양호',
+                            keywords: [], diagnosisScores: {}, diagnosisDrivers: [], responseCount: 0,
+                            createdAt: serverTimestamp()
+                        }
+                    )));
+                    alert(`팀 ${names.length}개를 가져왔습니다. 이제 구성원이 진단에 참여할 수 있습니다.`);
+                } catch (e) {
+                    console.error(e);
+                    alert("가져오기 실패: " + e.message);
+                } finally {
+                    setImporting(false);
+                }
+            };
             
             const handleSave = async (e) => { 
                 e.preventDefault(); 
@@ -2411,6 +2472,22 @@
                     <h2 className="text-lg font-bold text-slate-800 mb-2">팀 데이터 관리</h2>
                     {/* 단순 안내문은 중립색으로 — 레드는 오류/경고에만 쓴다. */}
                     <p className="text-sm text-slate-500 mb-4 font-medium">현재 선택된 기간: <span className="font-bold text-slate-700">{currentPeriod}</span> 에 데이터를 추가합니다.</p>
+
+                    {teamStats.length === 0 && (
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-5 flex items-start gap-3 flex-wrap">
+                            <Icon name="alert-circle" size={18} className="text-red-600 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1 min-w-[240px]">
+                                <p className="font-bold text-slate-800 text-sm">{currentPeriod} 에 등록된 팀이 없습니다</p>
+                                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                                    팀 목록이 비어 있으면 구성원이 소속 부서를 고를 수 없어 조직 진단을 제출하지 못합니다.
+                                    아래에서 직접 추가하시거나, 지난 기간 목록을 그대로 가져오세요.
+                                </p>
+                            </div>
+                            <button onClick={importPreviousTeams} disabled={importing} className="bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-700 disabled:opacity-40 transition-colors whitespace-nowrap">
+                                {importing ? "가져오는 중" : "지난 기간 팀 목록 가져오기"}
+                            </button>
+                        </div>
+                    )}
                     <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-6 bg-slate-50 p-4 rounded-lg"><input placeholder="팀명" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="md:col-span-2 border p-2 rounded text-sm" required /><select value={formData.workload} onChange={e => setFormData({...formData, workload: e.target.value})} className="border p-2 rounded text-sm"><option value="적정">업무: 적정</option><option value="과부하">업무: 과부하</option></select><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="border p-2 rounded text-sm"><option value="양호">상태: 양호</option><option value="위험">상태: 위험</option></select><button className="bg-brand-600 text-white md:col-span-1 rounded font-bold text-sm">저장</button></form>
                     <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50"><tr><th className="p-3">팀명</th><th className="p-3">상태</th><th className="p-3">키워드(VoE)</th><th className="p-3">관리</th></tr></thead><tbody>{teamStats.map(t => (<tr key={t.id} className="border-b"><td className="p-3">{t.name}</td><td className="p-3"><Badge type={t.status === '위험' || t.status === '심각' ? 'critical' : t.status === '표본부족' ? 'neutral' : 'good'} text={t.status} /></td><td className="p-3 text-xs text-slate-500">{t.keywords ? t.keywords.join(", ") : "-"}</td><td className="p-3"><button onClick={() => handleDelete(t.id)} className="text-red-500 text-xs">삭제</button></td></tr>))}</tbody></table></div>
                 </div>
@@ -2718,9 +2795,13 @@
             const [role, setRole] = useState('employee'); 
             const [currentView, setCurrentView] = useState('board');    // 구성원 첫 화면은 대나무숲 게시판
             const [showAdminLogin, setShowAdminLogin] = useState(false);
-            const [selectedYear, setSelectedYear] = useState("2026");
-            const [selectedMonth, setSelectedMonth] = useState("2");
-            const [availableYears, setAvailableYears] = useState(["2026", "2027"]);
+            const [selectedYear, setSelectedYear] = useState(() => nowPeriod().year);
+            const [selectedMonth, setSelectedMonth] = useState(() => nowPeriod().month);
+            // 올해가 목록에 없으면 관리자가 현재 기간을 고를 수 없게 된다.
+            const [availableYears, setAvailableYears] = useState(() => {
+                const y = Number(nowPeriod().year);
+                return [String(y), String(y + 1)];
+            });
             const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
             
             const currentPeriod = useMemo(() => getFormattedPeriod(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
