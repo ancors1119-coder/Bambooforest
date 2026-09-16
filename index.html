@@ -288,32 +288,110 @@
 
         /* 움직임을 원치 않는 사용자에게는 전부 멈춘다. */
         @media (prefers-reduced-motion: reduce) {
-            body::after, .post-enter, .pop, .sway, .hero-leaf { animation: none !important; }
-            .post-card, .lift, .write-prompt { transition: none !important; }
+            body::after, .post-enter, .pop, .sway, .hero-leaf,
+            .live-dot::after { animation: none !important; }
+            .post-card, .lift, .write-prompt, .sidebar-item, .nav-icon { transition: none !important; }
+            /* 바는 animation 으로 자라므로, 끌 때는 최종 상태를 직접 준다. */
+            .sidebar-item.active::before {
+                animation: none !important;
+                transform: translateY(-50%) scaleY(1);
+            }
+            .live-dot::after { opacity: 0; }
         }
 
         /* ── 사이드바 ────────────────────────────────────────────────── */
+        .sidebar-shell {
+            background:
+                radial-gradient(130% 55% at 50% 100%, rgba(217, 43, 43, 0.05), transparent 64%),
+                linear-gradient(180deg, #ffffff 0%, #fffafa 100%);
+        }
+        /* 머리에 옅은 브랜드 번짐을 둬서 로고가 흰 바탕에 떠 있지 않게 한다. */
+        .sidebar-brand {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, #ffffff 0%, var(--brand-50) 130%);
+        }
+        .sidebar-brand::after {
+            content: '';
+            position: absolute;
+            right: -22px; top: -26px;
+            width: 92px; height: 92px;
+            pointer-events: none;
+            background: radial-gradient(circle at 32% 32%, rgba(217, 43, 43, 0.13), transparent 68%);
+        }
+        .brand-mark {
+            background: linear-gradient(140deg, var(--brand-500), var(--brand-700));
+            box-shadow: 0 4px 12px -4px rgba(217, 43, 43, 0.55),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+
         .sidebar-item {
             position: relative;
-            transition: background-color 0.18s ease, color 0.18s ease;
+            transition: background-color .18s ease, color .18s ease,
+                        transform .18s cubic-bezier(.2,.7,.3,1);
         }
-        .sidebar-item:hover { background-color: var(--brand-50); color: var(--brand-600); }
-        .sidebar-item.active {
+        .sidebar-item:hover {
             background-color: var(--brand-50);
+            color: var(--brand-600);
+            transform: translateX(2px);
+        }
+        .sidebar-item.active {
+            background: linear-gradient(90deg, var(--brand-50), rgba(255, 245, 245, .3));
             color: var(--brand-700);
             font-weight: 700;
         }
-        /* 활성 항목은 왼쪽 레드 바로 표시한다. */
+        /* 활성 항목은 왼쪽 레드 바로 표시한다. 메뉴를 옮기면 바가 세로로 자란다. */
         .sidebar-item.active::before {
             content: '';
             position: absolute;
             left: 0;
             top: 50%;
-            transform: translateY(-50%);
             width: 3px;
-            height: 60%;
+            height: 62%;
             border-radius: 0 3px 3px 0;
-            background: var(--brand-600);
+            background: linear-gradient(180deg, var(--brand-500), var(--brand-700));
+            transform: translateY(-50%) scaleY(0);
+            animation: railIn .28s cubic-bezier(.2,.7,.3,1) forwards;
+        }
+        @keyframes railIn { to { transform: translateY(-50%) scaleY(1); } }
+
+        /* 아이콘은 제 타일 안에 둔다. 글자만 있던 줄에 무게중심이 생긴다. */
+        .nav-icon {
+            width: 32px; height: 32px;
+            border-radius: 9px;
+            display: grid; place-items: center;
+            flex-shrink: 0;
+            color: #9a8d8d;
+            background: #f4efef;
+            transition: background-color .18s ease, color .18s ease, box-shadow .18s ease;
+        }
+        .sidebar-item:hover .nav-icon { background: var(--brand-100); color: var(--brand-600); }
+        .sidebar-item.active .nav-icon {
+            background: linear-gradient(140deg, var(--brand-500), var(--brand-700));
+            color: #ffffff;
+            box-shadow: 0 3px 8px -2px rgba(217, 43, 43, 0.5);
+        }
+
+        .nav-caption {
+            font-size: 10.5px;
+            letter-spacing: .12em;
+            font-weight: 800;
+            color: #bdb0b0;
+        }
+
+        /* 연동 표시등에서 아주 옅은 파문이 퍼진다. */
+        .live-dot { position: relative; }
+        .live-dot::after {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 999px;
+            border: 1px solid rgba(34, 197, 94, 0.5);
+            animation: ripple 2.6s ease-out infinite;
+        }
+        @keyframes ripple {
+            0%   { transform: scale(.55); opacity: .9; }
+            100% { transform: scale(1.6); opacity: 0; }
         }
 
         /* ── 모션 ────────────────────────────────────────────────────── */
@@ -2992,23 +3070,25 @@
         };
 
         const Sidebar = ({ currentView, setView, role, isMobileMenuOpen, setIsMobileMenuOpen }) => {
+            // 관리자 메뉴는 여덟 줄이라 그냥 늘어놓으면 어디까지가 한 묶음인지
+            // 읽히지 않는다. 순서는 그대로 두고 머리글만 세 군데 넣는다.
             const adminMenu = [
-                { id: 'dashboard', label: '대시보드', icon: 'layout-dashboard' },
-                { id: 'board', label: '대나무숲 게시판', icon: 'users' },
-                { id: 'pulse', label: '조직진단 현황', icon: 'bar-chart-2' },
-                { id: 'teams', label: '팀/조직 관리', icon: 'users' },
-                { id: 'analysis', label: '분석 및 개선', icon: 'lightbulb' },
-                { id: 'data', label: '데이터 관리', icon: 'database' }, 
-                { id: 'report', label: '리포트 생성', icon: 'file-text' }, 
-                { id: 'settings', label: '설정', icon: 'settings' }
+                { id: 'dashboard', label: '대시보드', icon: 'layout-dashboard', group: '현황' },
+                { id: 'board', label: '대나무숲 게시판', icon: 'users', group: '현황' },
+                { id: 'pulse', label: '조직진단 현황', icon: 'bar-chart-2', group: '현황' },
+                { id: 'teams', label: '팀/조직 관리', icon: 'users', group: '운영' },
+                { id: 'analysis', label: '분석 및 개선', icon: 'lightbulb', group: '운영' },
+                { id: 'data', label: '데이터 관리', icon: 'database', group: '관리' },
+                { id: 'report', label: '리포트 생성', icon: 'file-text', group: '관리' },
+                { id: 'settings', label: '설정', icon: 'settings', group: '관리' }
             ];
             // 고충 접수는 사내 카카오톡 채널이 맡고, 이 사이트의 중심은 대나무숲이다.
             // 매일 들어오는 화면을 맨 위에 두고, 어쩌다 한 번 쓰는 창구를 아래로 내린다.
             const empMenu = [
-                { id: 'board', label: '대나무숲 게시판', icon: 'message-square' },
-                { id: 'guide', label: '이용 안내', icon: 'info' },
-                { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2' },
-                { id: 'complaint', label: '고충 접수', icon: 'shield' }
+                { id: 'board', label: '대나무숲 게시판', icon: 'message-square', group: '이야기' },
+                { id: 'guide', label: '이용 안내', icon: 'info', group: '이야기' },
+                { id: 'pulse-survey', label: '조직 진단', icon: 'bar-chart-2', group: '참여' },
+                { id: 'complaint', label: '고충 접수', icon: 'shield', group: '참여' }
             ];
             const menu = role === 'admin' ? adminMenu : empMenu;
             
@@ -3024,35 +3104,59 @@
                     
                     {/* Sidebar Drawer */}
                     <aside className={`
-                        fixed top-0 left-0 bottom-0 z-50 w-64 bg-white border-r border-slate-200 flex flex-col h-full 
+                        sidebar-shell fixed top-0 left-0 bottom-0 z-50 w-64 border-r border-slate-200 flex flex-col h-full 
                         transform transition-transform duration-300 ease-in-out
                         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} 
                         md:translate-x-0 no-print
                     `}>
-                        <div className="h-16 flex items-center px-5 border-b border-slate-100 justify-between">
-                            <div className="flex items-center gap-2.5">
-                                <span className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center shadow-brand">
-                                    <Icon name="message-square" size={17} />
+                        <div className="sidebar-brand h-16 flex items-center px-4 border-b border-brand-100 justify-between gap-2">
+                            {/* 모바일 서랍에서는 오른쪽에 닫기 버튼이 겹치므로 글자를 줄인다. */}
+                            <div className="relative flex items-center gap-2.5 min-w-0">
+                                <span className="brand-mark w-9 h-9 rounded-xl text-white flex items-center justify-center flex-shrink-0">
+                                    <BambooLeaf size={19} />
                                 </span>
-                                <span className="font-extrabold text-lg text-slate-900 tracking-tight">엔코스 대나무숲</span>
+                                <span className="flex flex-col leading-none min-w-0">
+                                    <span className="font-extrabold text-[15px] md:text-[17px] text-slate-900 tracking-tight truncate">엔코스 대나무숲</span>
+                                    <span className="text-[10.5px] text-brand-600 font-bold tracking-wide mt-1">익명 소통 공간</span>
+                                </span>
                             </div>
-                            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-500 hover:text-brand-600">
+                            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-500 hover:text-brand-600 flex-shrink-0 relative">
                                 <Icon name="x" size={24} />
                             </button>
                         </div>
-                        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-                            {menu.map(item => (
-                                <button key={item.id} onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg ${currentView === item.id ? 'active' : 'text-slate-600'}`}>
-                                    <Icon name={item.icon} size={20} />
-                                    {item.label}
-                                </button>
+                        <nav className="flex-1 p-3 overflow-y-auto">
+                            {menu.map((item, i) => (
+                                <React.Fragment key={item.id}>
+                                    {item.group && item.group !== menu[i - 1]?.group && (
+                                        <div className={`nav-caption px-3 pb-1.5 ${i === 0 ? 'pt-2' : 'pt-4'}`}>{item.group}</div>
+                                    )}
+                                    <button onClick={() => { setView(item.id); setIsMobileMenuOpen(false); }} className={`sidebar-item w-full flex items-center gap-3 px-2.5 py-2 text-sm font-medium rounded-xl ${currentView === item.id ? 'active' : 'text-slate-600'}`}>
+                                        <span className="nav-icon"><Icon name={item.icon} size={17} /></span>
+                                        {item.label}
+                                    </button>
+                                </React.Fragment>
                             ))}
+                            {role !== 'admin' && (
+                                <div className="mt-6 mx-1 rounded-xl border border-brand-100 bg-white/70 p-3.5">
+                                    <div className="flex items-center gap-1.5 text-brand-700">
+                                        <Icon name="shield" size={13} />
+                                        <span className="text-[11px] font-extrabold">익명 보장</span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 leading-relaxed mt-1.5">
+                                        이름·부서를 받지 않습니다. 글마다 다른 표식이 붙어, 같은 사람이 쓴 글끼리도 서로 연결되지 않습니다.
+                                    </p>
+                                </div>
+                            )}
                         </nav>
-                        <div className="p-4 border-t border-slate-100">
-                            <div className={`p-3 rounded-lg border flex items-center gap-2 mb-2 ${role === 'admin' ? 'bg-slate-900 text-white border-slate-900' : 'bg-brand-50 text-brand-700 border-brand-100'}`}>
+                        <div className="p-3 border-t border-brand-100">
+                            <div className={`px-3 py-2.5 rounded-xl border flex items-center gap-2.5 mb-2.5 ${role === 'admin' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-brand-700 border-brand-100'}`}>
+                                <Icon name={role === 'admin' ? 'shield' : 'users'} size={15} />
                                 <span className="text-xs font-bold">{role === 'admin' ? '관리자 모드' : '구성원 모드'}</span>
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-slate-500 px-1"><div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div><span>시스템 연동됨</span></div>
+                            <div className="flex items-center gap-2.5 text-xs text-slate-400 px-2">
+                                <span className="live-dot w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"></span>
+                                <span>시스템 연동됨</span>
+                            </div>
                         </div>
                     </aside>
                 </>
