@@ -354,6 +354,38 @@
             .live-dot::after { opacity: 0; }
         }
 
+        /* ── 이용 안내의 창구 카드 ───────────────────────────────────
+           두 창구는 성격이 다르므로 색을 나눠야 한다. 다만 회색은 UI 에서
+           '꺼짐·비활성'으로 읽히므로 쓰지 않는다. 고충 접수는 '담당자만
+           보는 창구'라는 성격에 맞게 짙은 잉크블루를 쓴다. */
+        .ch-brand {
+            --ch: var(--brand-600); --ch-deep: var(--brand-700);
+            --ch-soft: var(--brand-50); --ch-line: var(--brand-200);
+            --ch-line-soft: var(--brand-100);
+        }
+        .ch-ink {
+            --ch: #3d4a61; --ch-deep: #2b3648;
+            --ch-soft: #eef1f6; --ch-line: #c2ccdb;
+            --ch-line-soft: #dbe2ec;
+        }
+        .ch-card {
+            background: var(--surface);
+            border: 1px solid var(--ch-line);
+            border-radius: 16px;
+            transition: transform .2s cubic-bezier(.2,.7,.3,1),
+                        box-shadow .2s ease, border-color .2s ease;
+        }
+        .ch-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--ch);
+            box-shadow: 0 12px 30px -16px color-mix(in srgb, var(--ch) 60%, transparent);
+        }
+        .ch-badge { background: var(--ch-soft); color: var(--ch); border: 1px solid var(--ch-line-soft); }
+        .ch-tag   { color: var(--ch); }
+        .ch-dot   { background: var(--ch); opacity: .55; }
+        .ch-btn   { background: var(--ch); color: #fff; transition: background-color .18s ease; }
+        .ch-btn:hover { background: var(--ch-deep); }
+
         /* ── 사이드바 ────────────────────────────────────────────────── */
         .sidebar-shell {
             overflow: hidden;
@@ -1267,7 +1299,7 @@
                     icon: 'message-square',
                     label: '대나무숲 게시판',
                     tagline: '구성원 모두가 봅니다',
-                    tone: 'brand',
+                    tone: 'ch-brand',
                     desc: '개선 아이디어, 칭찬, 소소한 질문처럼 함께 이야기하고 싶은 주제를 자유롭게 나눕니다. 이 사이트의 기본 공간입니다.',
                     points: ['모든 구성원이 읽고 댓글', '글마다 다른 익명 표식', `신고 ${BOARD_BLIND_THRESHOLD}건이면 자동으로 가려짐`],
                     cta: '게시판 둘러보기'
@@ -1277,7 +1309,8 @@
                     icon: 'shield',
                     label: '고충 접수',
                     tagline: '담당자만 봅니다',
-                    tone: 'slate',
+                    // 회색이면 '운영하지 않는 창구'처럼 보인다. 잉크블루로 둔다.
+                    tone: 'ch-ink',
                     desc: '괴롭힘, 부당한 업무 배분, 평가·보상 문제처럼 개별적으로 확인과 조치가 필요한 일을 접수합니다. 사내 카카오톡 채널로 연결됩니다.',
                     points: ['담당자만 열람', '담당자와 1:1 대화', '카카오톡이라 익명은 아님'],
                     cta: '고충 접수 안내'
@@ -1317,7 +1350,7 @@
                             <button onClick={() => setView('board')} className="bg-brand-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-brand-700 shadow-brand transition-colors flex items-center gap-2">
                                 <Icon name="edit-3" size={16} /> 게시판 둘러보기
                             </button>
-                            <button onClick={() => setView('complaint')} className="bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-xl text-sm font-bold hover:border-brand-300 hover:text-brand-600 transition-colors flex items-center gap-2">
+                            <button onClick={() => setView('complaint')} className="ch-ink ch-btn px-5 py-3 rounded-xl text-sm font-bold flex items-center gap-2">
                                 <Icon name="shield" size={16} /> 고충 접수 안내
                             </button>
                         </div>
@@ -1328,33 +1361,30 @@
                         <h2 className="text-lg font-bold text-slate-800 mb-1 px-1">어디에 남길까요?</h2>
                         <p className="text-sm text-slate-500 mb-4 px-1">두 창구는 보이는 범위가 다릅니다.</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {channels.map(ch => {
-                                const brand = ch.tone === 'brand';
-                                return (
-                                    <div key={ch.id} className={`bg-white rounded-2xl border p-5 md:p-6 flex flex-col ${brand ? 'border-brand-200' : 'border-slate-200'}`}>
-                                        <div className="flex items-center gap-2.5 mb-3">
-                                            <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${brand ? 'bg-brand-50 text-brand-600 border border-brand-100' : 'bg-slate-100 text-slate-600'}`}>
-                                                <Icon name={ch.icon} size={18} />
-                                            </span>
-                                            <div>
-                                                <p className="font-bold text-slate-900">{ch.label}</p>
-                                                <p className={`text-xs font-bold ${brand ? 'text-brand-600' : 'text-slate-500'}`}>{ch.tagline}</p>
-                                            </div>
+                            {channels.map(ch => (
+                                <div key={ch.id} className={`${ch.tone} ch-card p-5 md:p-6 flex flex-col`}>
+                                    <div className="flex items-center gap-2.5 mb-3">
+                                        <span className="ch-badge w-9 h-9 rounded-lg flex items-center justify-center">
+                                            <Icon name={ch.icon} size={18} />
+                                        </span>
+                                        <div>
+                                            <p className="font-bold text-slate-900">{ch.label}</p>
+                                            <p className="ch-tag text-xs font-bold">{ch.tagline}</p>
                                         </div>
-                                        <p className="text-sm text-slate-600 leading-relaxed">{ch.desc}</p>
-                                        <ul className="mt-4 space-y-1.5 flex-1">
-                                            {ch.points.map(pt => (
-                                                <li key={pt} className="flex items-start gap-2 text-xs text-slate-600">
-                                                    <span className="mt-1.5 w-1 h-1 rounded-full bg-slate-400 flex-shrink-0"></span>{pt}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                        <button onClick={() => setView(ch.id)} className={`mt-5 w-full py-2.5 rounded-lg text-sm font-bold transition-colors ${brand ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
-                                            {ch.cta}
-                                        </button>
                                     </div>
-                                );
-                            })}
+                                    <p className="text-sm text-slate-600 leading-relaxed">{ch.desc}</p>
+                                    <ul className="mt-4 space-y-1.5 flex-1">
+                                        {ch.points.map(pt => (
+                                            <li key={pt} className="flex items-start gap-2 text-xs text-slate-600">
+                                                <span className="ch-dot mt-1.5 w-1 h-1 rounded-full flex-shrink-0"></span>{pt}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <button onClick={() => setView(ch.id)} className="ch-btn mt-5 w-full py-2.5 rounded-lg text-sm font-bold">
+                                        {ch.cta}
+                                    </button>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
