@@ -39,8 +39,12 @@ firebase deploy --only functions
 Artifact Registry 에 쌓여 매달 조금씩 과금되는 것을 막아준다.
 
 ```
-firebase functions:artifacts:setpolicy
+firebase functions:artifacts:setpolicy --location asia-northeast3
 ```
+
+리전을 빼면 기본값 us-central1 에서 저장소를 찾다가 실패한다. 기본 정책은
+하루 지난 이미지를 지우는 것인데, 배포된 함수는 이미 Cloud Run 에 올라가
+있으므로 안전하다.
 
 처음 배포할 때는 필요한 API(Cloud Functions, Cloud Build, Artifact Registry)를
 켜도 되는지 물어본다. 모두 예로 답하면 된다. 5~10분쯤 걸린다.
