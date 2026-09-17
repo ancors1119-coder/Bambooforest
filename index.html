@@ -3559,6 +3559,7 @@
                 return [String(y), String(y + 1)];
             });
             const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+            const [identityReset, setIdentityReset] = useState(false);
             
             const currentPeriod = useMemo(() => getFormattedPeriod(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
 
@@ -3679,7 +3680,12 @@
                 if (role !== 'admin') return;
                 try {
                     await window.firebaseAuth.signOut(window.auth);
+                    // 로그아웃한 익명 계정은 되살릴 수 없다. 여기서 새 uid 가
+                    // 발급되므로, 그 전에 이 브라우저에서 쓴 글은 더 이상
+                    // '내 글' 로 잡히지 않는다. 아무 설명 없이 삭제 버튼만
+                    // 사라지면 고장으로 보이므로 무슨 일이 있었는지 알린다.
                     await window.firebaseAuth.signInAnonymously(window.auth);
+                    setIdentityReset(true);
                 } catch (e) { console.error(e); }
                 setRole('employee');
             };
@@ -3727,6 +3733,22 @@
                                 </div>
                             </div>
                         </header>
+
+                        {identityReset && role === 'employee' && (
+                            <div className="mb-5 bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 flex items-start gap-2.5 no-print">
+                                <Icon name="info" size={16} className="text-brand-600 mt-0.5 flex-shrink-0" />
+                                <p className="text-xs text-slate-700 leading-relaxed flex-1">
+                                    <span className="font-bold">익명 신분이 새로 발급되었습니다.</span>{' '}
+                                    관리자로 로그인하면 이 브라우저의 익명 신분이 바뀝니다. 그보다 전에 쓰신 글은
+                                    더 이상 ‘내 글’로 표시되지 않아 구성원 모드에서는 지우실 수 없습니다.
+                                    그 글들은 관리자 모드에서 지우실 수 있습니다.
+                                </p>
+                                <button onClick={() => setIdentityReset(false)} aria-label="안내 닫기"
+                                        className="text-slate-400 hover:text-brand-600 flex-shrink-0">
+                                    <Icon name="x" size={15} />
+                                </button>
+                            </div>
+                        )}
                         
                         {currentView === 'board' && <BoardView user={user} role={role} setView={setCurrentView} />}
 
