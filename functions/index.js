@@ -2,14 +2,20 @@
  * 대나무숲 게시판 삭제 함수
  *
  * 게시판은 작성자 정보를 저장하지 않는다. 글에는 글마다 다른 nonce 와,
- * 그 nonce 와 작성자 uid 를 함께 해시한 authorTag 만 남는다.
+ * 그 nonce 와 작성자의 비밀을 함께 해시한 authorTag 만 남는다.
  * 이 구조 덕분에 같은 사람이 쓴 글끼리 묶이지 않지만, 대신 Firestore
  * 보안 규칙만으로는 '이 요청자가 작성자인가' 를 판정할 수 없다.
  * 규칙에는 해시 함수가 없기 때문이다.
  *
- * 그래서 삭제만 이 함수를 거친다. 함수는 호출자의 uid 로 authorTag 를
- * 다시 계산해 문서에 저장된 값과 맞춰본다. 맞으면 작성자다. uid 는
- * 어디에도 저장하지 않으므로 익명성은 그대로다.
+ * 그래서 삭제만 이 함수를 거친다. 함수가 authorTag 를 다시 계산해 문서에
+ * 저장된 값과 맞춰본다. 맞으면 작성자다. 비밀은 어디에도 저장하지 않는다.
+ *
+ * 비밀은 둘 중 하나다.
+ *   key … 브라우저가 만든 익명 열쇠. 다른 기기로 옮길 수 있어 어디서든
+ *         자기 글을 지울 수 있다. 열쇠를 안다는 것 자체가 증명이며,
+ *         남의 글을 지우려면 sha256 역산이 필요하므로 위조할 수 없다.
+ *   uid … 열쇠 방식 이전에 쓰던 값. 그때 쓴 글을 계속 지울 수 있도록
+ *         함께 인정한다. 옛 글이 다 사라지면 이 경로는 지워도 된다.
  *
  * 규칙 쪽은 board_posts / board_comments 의 delete 를 관리자에게만 열어두면 된다.
  * 이 함수는 Admin SDK 로 동작해 규칙을 우회한다.
@@ -26,8 +32,21 @@ const db = getFirestore();
 const BOARD_SALT = "bambooforest-board-v1";
 const APP_ID = "hr_dashboard";   // index.html 의 APP_ID 와 같아야 한다
 
-const anonTag = (nonce, uid) =>
-  crypto.createHash("sha256").update(`${BOARD_SALT}:${nonce}:${uid}`).digest("hex").slice(0, 16);
+const anonTag = (nonce, secret) =>
+  crypto.createHash("sha256").update(`${BOARD_SALT}:${nonce}:${secret}`).digest("hex").slice(0, 16);
+
+// 열쇠는 16바이트 난수를 소문자 16진수로 적은 32자다. 형식이 아니면 아예 보지 않는다.
+const cleanKey = (v) => {
+  const k = String(v || "").toLowerCase().replace(/[^0-9a-f]/g, "");
+  return k.length === 32 ? k : "";
+};
+
+/** 이 nonce/authorTag 의 주인이 맞는가. 열쇠로 맞거나, 예전 uid 로 맞으면 주인이다. */
+const ownsTag = (nonce, authorTag, key, uid) => {
+  if (!nonce || !authorTag) return false;
+  if (key && anonTag(nonce, key) === authorTag) return true;
+  return !!uid && anonTag(nonce, uid) === authorTag;
+};
 
 const dataCol = (name) => db.collection(`artifacts/${APP_ID}/public/data/${name}`);
 
@@ -46,7 +65,7 @@ exports.deleteBoardPost = onCall({ region: "asia-northeast3" }, async (req) => {
   if (!snap.exists) throw new HttpsError("not-found", "이미 삭제된 글입니다.");
 
   const post = snap.data();
-  const mine = post.nonce && post.authorTag && anonTag(post.nonce, uid) === post.authorTag;
+  const mine = ownsTag(post.nonce, post.authorTag, cleanKey(req.data && req.data.key), uid);
   if (!mine && !(await isAdmin(uid))) {
     throw new HttpsError("permission-denied", "본인이 쓴 글만 삭제할 수 있습니다.");
   }
@@ -81,7 +100,7 @@ exports.deleteBoardComment = onCall({ region: "asia-northeast3" }, async (req) =
   // 댓글의 태그도 '그 글의 nonce' 로 만들어졌으므로 원글을 읽어야 검증할 수 있다.
   const postSnap = await dataCol("board_posts").doc(String(comment.postId)).get();
   const nonce = postSnap.exists ? postSnap.data().nonce : null;
-  const mine = nonce && comment.authorTag && anonTag(nonce, uid) === comment.authorTag;
+  const mine = ownsTag(nonce, comment.authorTag, cleanKey(req.data && req.data.key), uid);
   if (!mine && !(await isAdmin(uid))) {
     throw new HttpsError("permission-denied", "본인이 쓴 댓글만 삭제할 수 있습니다.");
   }

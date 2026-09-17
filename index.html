@@ -1443,7 +1443,7 @@
                                 <span className="font-bold">게시판 글은 내용만으로 신원이 드러날 수 있습니다.</span> 시스템은 신원을 수집하지 않지만, 날짜·부서·상황을 자세히 적으시면 내용만으로 특정될 수 있습니다. 필요한 만큼만 적어주세요.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">게시판 글은 쓰신 브라우저에서만 삭제할 수 있습니다.</span> 익명 유지를 위해 작성자 정보를 저장하지 않고, 대신 글을 쓴 브라우저만 본인임을 증명할 수 있게 해두었기 때문입니다.
+                                <span className="font-bold">글 삭제는 ‘익명 열쇠’로 증명합니다.</span> 작성자 정보를 저장하지 않는 대신, 브라우저가 만든 열쇠가 본인임을 증명합니다. 다른 기기에서도 지우시려면 게시판의 ‘다른 기기에서 내 글 지우기’에서 열쇠를 옮겨두세요. 열쇠를 잃으면 본인도 지울 수 없습니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
@@ -1623,11 +1623,56 @@
             return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
         };
 
-        const makeAnonTag = async (nonce, uid) => {
+        // 글에는 작성자 정보 대신 sha256(소금:nonce:비밀) 만 남는다. nonce 가
+        // 글마다 다르므로 같은 사람이 써도 글끼리 묶이지 않는다.
+        const makeAnonTag = async (nonce, secret) => {
             if (!window.crypto?.subtle) throw new Error('보안 연결(HTTPS)에서만 게시판을 사용할 수 있습니다.');
-            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${uid}`);
+            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${secret}`);
             const buf = await window.crypto.subtle.digest('SHA-256', data);
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+        };
+
+        // ── 익명 열쇠 ────────────────────────────────────────────────
+        // 예전에는 위 '비밀' 자리에 Firebase 익명 uid 를 썼다. uid 는 브라우저를
+        // 벗어나지 못해서, 관리자 로그인 한 번이나 기기 변경만으로 자기 글을
+        // 지울 수 없게 됐다. 그러면 남은 방법이 '관리자에게 지워달라고 부탁하기'
+        // 뿐인데, 그 순간 자기가 그 글을 썼다고 밝히는 셈이라 익명 게시판에서
+        // 가장 위험한 순간이 삭제 요청이 된다.
+        //
+        // 그래서 uid 대신 브라우저가 만든 난수 열쇠를 쓴다. 옮길 수 있으므로
+        // 어느 기기에서도 자기 글을 지울 수 있다. 열쇠를 안다는 것 자체가
+        // 증명이고(역산은 sha256 preimage), 서버에는 저장되지 않는다.
+        const BOARD_KEY_STORAGE = 'bambooforest-board-key-v1';
+        const normalizeBoardKey = (v) => String(v || '').toLowerCase().replace(/[^0-9a-f]/g, '').slice(0, 32);
+        const formatBoardKey = (k) => (String(k).match(/.{1,8}/g) || []).join('-');
+        const isBoardKey = (k) => normalizeBoardKey(k).length === 32;
+
+        const newBoardKey = () => {
+            const a = new Uint8Array(16);      // 128비트. 추측으로는 못 맞춘다.
+            window.crypto.getRandomValues(a);
+            return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+
+        // 시크릿 창처럼 저장소가 막힌 곳에서도 글은 쓸 수 있어야 하므로,
+        // 저장에 실패하면 이번 세션에서만 쓰는 열쇠로 넘어간다.
+        let sessionBoardKey = '';
+        const getBoardKey = () => {
+            let k = '';
+            try { k = normalizeBoardKey(localStorage.getItem(BOARD_KEY_STORAGE)); } catch (e) { /* 저장소 막힘 */ }
+            if (k.length !== 32) k = normalizeBoardKey(sessionBoardKey);
+            if (k.length !== 32) {
+                k = newBoardKey();
+                try { localStorage.setItem(BOARD_KEY_STORAGE, k); } catch (e) { /* 저장소 막힘 */ }
+            }
+            sessionBoardKey = k;
+            return k;
+        };
+        const setBoardKeyValue = (v) => {
+            const k = normalizeBoardKey(v);
+            if (k.length !== 32) return false;
+            sessionBoardKey = k;
+            try { localStorage.setItem(BOARD_KEY_STORAGE, k); } catch (e) { /* 저장소 막힘 */ }
+            return true;
         };
 
         const timeAgo = (value) => {
@@ -1641,12 +1686,104 @@
             return new Date(ms).toLocaleDateString();
         };
 
+        // 열쇠를 옮기는 화면. 열쇠는 기본적으로 가려 둔다. 어깨너머로 보이면
+        // 그 사람이 내 글을 지울 수 있기 때문이다.
+        const BoardKeyPanel = ({ boardKey, onApply, onClose }) => {
+            const [revealed, setRevealed] = useState(false);
+            const [input, setInput] = useState('');
+            const [copied, setCopied] = useState(false);
+            const shown = formatBoardKey(boardKey);
+
+            const copy = async () => {
+                try {
+                    await navigator.clipboard.writeText(shown);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                } catch (e) {
+                    setRevealed(true);   // 복사가 막힌 브라우저에서는 직접 옮기시게 펼친다
+                    alert("복사가 막혀 있습니다. 열쇠를 직접 옮겨 적어주세요.");
+                }
+            };
+
+            const apply = () => {
+                if (!isBoardKey(input)) return alert("열쇠 형식이 아닙니다. 32자리를 모두 붙여넣어 주세요.");
+                if (normalizeBoardKey(input) === boardKey) { setInput(''); return alert("이미 이 열쇠를 쓰고 계십니다."); }
+                if (!confirm("이 기기의 열쇠를 바꿉니다.\n\n지금 열쇠로 쓴 글은 이 기기에서 더 이상 '내 글'로 보이지 않습니다. 계속할까요?")) return;
+                if (onApply(input)) { setInput(''); alert("열쇠를 바꿨습니다."); }
+                else alert("열쇠를 저장하지 못했습니다. 브라우저 저장소가 막혀 있는지 확인해주세요.");
+            };
+
+            return (
+                <div className="bg-white rounded-2xl shadow-card border border-brand-200 p-5 md:p-6">
+                    <div className="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 className="font-bold text-slate-900 flex items-center gap-2">
+                                <Icon name="key" size={16} className="text-brand-600" /> 내 익명 열쇠
+                            </h2>
+                            <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">
+                                이 열쇠가 ‘내가 쓴 글’을 증명합니다. 다른 기기에 옮겨 두면 그 기기에서도 내 글을 지울 수 있습니다.
+                                열쇠는 이 브라우저에만 있고 서버에는 저장되지 않습니다.
+                            </p>
+                        </div>
+                        <button onClick={onClose} aria-label="닫기" className="text-slate-400 hover:text-brand-600 flex-shrink-0">
+                            <Icon name="x" size={18} />
+                        </button>
+                    </div>
+
+                    <div className="mt-4 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                        <p className="text-[11px] font-bold text-slate-500 mb-2">이 기기의 열쇠</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <code className="flex-1 min-w-[220px] font-mono text-sm text-slate-800 tracking-wide break-all">
+                                {revealed ? shown : '••••••••-••••••••-••••••••-••••••••'}
+                            </code>
+                            <button onClick={() => setRevealed(v => !v)} className="text-xs font-bold text-slate-600 border border-slate-200 bg-white px-3 py-2 rounded-lg hover:border-brand-300 hover:text-brand-600 transition-colors">
+                                {revealed ? '가리기' : '보기'}
+                            </button>
+                            <button onClick={copy} className="text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg hover:bg-brand-700 transition-colors">
+                                {copied ? '복사됨' : '복사'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="mt-3 bg-red-50 border border-red-100 rounded-xl px-4 py-3 flex items-start gap-2.5">
+                        <Icon name="alert-circle" size={15} className="text-red-600 mt-0.5 flex-shrink-0" />
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                            <span className="font-bold">이 열쇠를 아는 사람은 내가 쓴 글을 지울 수 있습니다.</span>{' '}
+                            남에게 보여주지 마시고, 공용 PC 에서는 옮기지 마세요. 글의 내용을 읽는 데는 열쇠가 필요 없으므로,
+                            열쇠가 새어도 누가 썼는지는 드러나지 않습니다.
+                        </p>
+                    </div>
+
+                    <div className="mt-4 border-t border-slate-100 pt-4">
+                        <p className="text-[11px] font-bold text-slate-500 mb-2">다른 기기의 열쇠 가져오기</p>
+                        <div className="flex gap-2 flex-wrap">
+                            <input
+                                value={input}
+                                onChange={e => setInput(e.target.value)}
+                                placeholder="예전 기기에서 복사한 열쇠를 붙여넣기"
+                                className="flex-1 min-w-[220px] border border-slate-200 rounded-lg px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                            />
+                            <button onClick={apply} disabled={!input.trim()} className="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                                적용
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                            열쇠를 바꾸면 지금 열쇠로 쓴 글은 이 기기에서 ‘내 글’로 보이지 않습니다. 기기마다 다른 열쇠를 쓰셔도 됩니다.
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
         const BoardView = ({ user, role, setView }) => {
             const isAdmin = role === 'admin';
             const [posts, setPosts] = useState([]);
             const [comments, setComments] = useState([]);
             const [selectedId, setSelectedId] = useState(null);
-            const [myTags, setMyTags] = useState({});      // postId -> 내 익명 태그
+            const [myTags, setMyTags] = useState({});      // postId -> 공감·신고에 쓸 내 태그(열쇠 기반)
+            const [mineIds, setMineIds] = useState({});    // postId -> 내가 쓴 글인가
+            const [boardKey, setBoardKey] = useState(() => { try { return getBoardKey(); } catch (e) { return ''; } });
+            const [showKeyPanel, setShowKeyPanel] = useState(false);
             const [composing, setComposing] = useState(false);
             const [draft, setDraft] = useState({ category: 'free', title: '', content: '' });
             const [sending, setSending] = useState(false);
@@ -1734,25 +1871,35 @@
             }, [posts, searchPool]);
 
             useEffect(() => {
-                if (!user || tagTargets.length === 0) return;
+                if (tagTargets.length === 0 || !boardKey) return;
                 let alive = true;
                 (async () => {
-                    const next = {};
+                    const tags = {}, mine = {};
                     for (const post of tagTargets) {
                         if (!post.nonce) continue;
-                        try { next[post.id] = await makeAnonTag(post.nonce, user.uid); } catch { /* HTTPS 아님 */ }
+                        try {
+                            const byKey = await makeAnonTag(post.nonce, boardKey);
+                            tags[post.id] = byKey;
+                            // 열쇠로 맞으면 내 글이다. 열쇠를 쓰기 전에 이 브라우저에서
+                            // 쓴 글은 uid 로 태그가 만들어져 있으므로 그것도 인정한다.
+                            // (열쇠 방식으로 옮기면서 예전 글을 잃지 않기 위한 경로다)
+                            if (byKey === post.authorTag) { mine[post.id] = true; continue; }
+                            if (user?.uid && (await makeAnonTag(post.nonce, user.uid)) === post.authorTag) {
+                                mine[post.id] = true;
+                            }
+                        } catch (e) { /* HTTPS 아님 */ }
                     }
-                    if (alive) setMyTags(next);
+                    if (alive) { setMyTags(tags); setMineIds(mine); }
                 })();
                 return () => { alive = false; };
-            }, [tagTargets, user]);
+            }, [tagTargets, user, boardKey]);
 
             // 검색 결과에서 연 글은 posts 에 없을 수 있다.
             const selected = tagTargets.find(p => p.id === selectedId) || null;
 
             // 정렬·필터·개수는 서버 쿼리가 이미 처리했다.
             // 여기서는 블라인드된 글만 걷어낸다(관리자와 작성자 본인에게는 남긴다).
-            const readable = (p) => !isBlinded(p) || isAdmin || myTags[p.id] === p.authorTag;
+            const readable = (p) => !isBlinded(p) || isAdmin || !!mineIds[p.id];
 
             // 검색 중에는 서버가 걸러 준 목록 대신 받아둔 풀을 쓴다.
             // 말머리와 정렬은 서버가 해 주던 일을 여기서 그대로 대신한다.
@@ -1766,11 +1913,11 @@
                     .sort((a, b) => sort === 'like'
                         ? (b.likeCount || 0) - (a.likeCount || 0)
                         : (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            }, [searchTerm, searchPool, filter, sort, isAdmin, myTags]);
+            }, [searchTerm, searchPool, filter, sort, isAdmin, mineIds]);
 
             const visiblePosts = useMemo(
                 () => searchHits || posts.filter(readable),
-                [searchHits, posts, isAdmin, myTags]
+                [searchHits, posts, isAdmin, mineIds]
             );
 
             // 머리말에 보여줄 숫자. 서버에서 가져온 '지금 목록'만 센다.
@@ -1798,7 +1945,7 @@
                         content,
                         category: draft.category,
                         nonce,
-                        authorTag: await makeAnonTag(nonce, user.uid),
+                        authorTag: await makeAnonTag(nonce, boardKey),
                         likedBy: [],
                         // likedBy 배열 길이로는 서버 정렬을 할 수 없어 개수를 따로 둔다.
                         likeCount: 0,
@@ -1830,7 +1977,7 @@
                         postId: selected.id,
                         content,
                         // 댓글도 같은 글의 nonce 를 쓰므로, 같은 글 안에서만 동일인이 식별된다.
-                        authorTag: await makeAnonTag(selected.nonce, user.uid),
+                        authorTag: await makeAnonTag(selected.nonce, boardKey),
                         createdAt: window.firestore.serverTimestamp()
                     });
                     await window.firestore.updateDoc(ref('board_posts', selected.id), {
@@ -1875,7 +2022,7 @@
             const removePost = async (post) => {
                 if (!confirm("이 글을 삭제하시겠습니까? 삭제된 글은 복구할 수 없습니다.")) return;
                 try {
-                    await window.callFn('deleteBoardPost', { postId: post.id });
+                    await window.callFn('deleteBoardPost', { postId: post.id, key: boardKey });
                     setSelectedId(null);
                 } catch (e) {
                     alert(e.code === 'functions/permission-denied'
@@ -1895,7 +2042,7 @@
             const removeComment = async (comment) => {
                 if (!confirm("이 댓글을 삭제하시겠습니까?")) return;
                 try {
-                    await window.callFn('deleteBoardComment', { commentId: comment.id });
+                    await window.callFn('deleteBoardComment', { commentId: comment.id, key: boardKey });
                 } catch (e) {
                     alert(e.code === 'functions/permission-denied'
                         ? "본인이 쓴 댓글만 삭제할 수 있습니다."
@@ -1906,7 +2053,7 @@
             // ── 글 상세 ──────────────────────────────────────────────
             if (selected) {
                 const myTag = myTags[selected.id];
-                const mine = myTag && myTag === selected.authorTag;
+                const mine = !!mineIds[selected.id];
                 const liked = myTag && (selected.likedBy || []).includes(myTag);
                 const sorted = comments.slice().sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
                 // 같은 글 안에서 등장 순서대로 익명1, 익명2… 를 붙인다.
@@ -2016,6 +2163,13 @@
             const showWritePrompt = !searchTerm && visiblePosts.length > 0 && visiblePosts.length < 3 && !composing;
             return (
                 <div className="max-w-6xl mx-auto animate-fade-in my-4 md:my-8 space-y-4">
+                    {showKeyPanel && (
+                        <BoardKeyPanel
+                            boardKey={boardKey}
+                            onApply={(k) => { if (setBoardKeyValue(k)) { setBoardKey(normalizeBoardKey(k)); return true; } return false; }}
+                            onClose={() => setShowKeyPanel(false)}
+                        />
+                    )}
                     <div className="board-hero rounded-2xl shadow-card p-5 md:p-7">
                         <div aria-hidden="true">
                             <span className="hero-leaf" style={{ top: '-14px', right: '28px', animationDelay: '0s' }}><BambooLeaf size={96} /></span>
@@ -2043,6 +2197,9 @@
                                         </button>
                                         <button onClick={() => setView('complaint')} className="text-xs font-bold text-slate-500 hover:text-brand-600 flex items-center gap-1">
                                             <Icon name="shield" size={13} /> 담당자에게만 알리고 싶다면 · 고충 접수
+                                        </button>
+                                        <button onClick={() => setShowKeyPanel(true)} className="text-xs font-bold text-slate-500 hover:text-brand-600 flex items-center gap-1">
+                                            <Icon name="key" size={13} /> 다른 기기에서 내 글 지우기
                                         </button>
                                     </div>
                                 )}
@@ -2076,7 +2233,7 @@
                                 </div>
                                 <textarea value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} rows="5" placeholder="하고 싶은 이야기를 자유롭게 남겨주세요. 특정 개인을 알아볼 수 있는 내용은 피해주세요." className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-sm resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" />
                                 <div className="flex items-center gap-2 mt-3">
-                                    <p className="text-xs text-slate-400 flex-1">등록 후에는 이 브라우저에서만 삭제할 수 있습니다.</p>
+                                    <p className="text-xs text-slate-400 flex-1">삭제는 이 브라우저의 익명 열쇠로 증명합니다. 다른 기기에서도 지우시려면 열쇠를 옮겨두세요.</p>
                                     <button type="button" onClick={() => { setComposing(false); setDraft({ category: 'free', title: '', content: '' }); }} className="px-4 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">취소</button>
                                     <button type="submit" disabled={!draft.title.trim() || !draft.content.trim() || sending} className="bg-brand-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">{sending ? "등록 중" : "등록"}</button>
                                 </div>
@@ -2147,7 +2304,7 @@
                         <div className={`grid grid-cols-1 gap-3 ${visiblePosts.length + (showWritePrompt ? 1 : 0) > 1 ? 'xl:grid-cols-2' : ''}`}>
                         {visiblePosts.map((post, i) => {
                             const myTag = myTags[post.id];
-                            const mine = myTag && myTag === post.authorTag;
+                            const mine = !!mineIds[post.id];
                             const liked = myTag && (post.likedBy || []).includes(myTag);
                             const cat = getBoardCategory(post.category);
                             return (
@@ -3526,7 +3683,7 @@
                                         <span className="text-[11px] font-extrabold">익명 보장</span>
                                     </div>
                                     <p className="text-[11px] text-slate-500 leading-relaxed mt-1.5">
-                                        이름·부서를 받지 않습니다. 글마다 다른 표식이 붙어, 같은 사람이 쓴 글끼리도 서로 연결되지 않습니다.
+                                        이름·부서를 받지 않습니다. 글마다 다른 표식이 붙어, 같은 사람이 쓴 글끼리도 서로 연결되지 않습니다. 삭제는 이 브라우저의 열쇠로만 증명합니다.
                                     </p>
                                 </div>
                             )}
@@ -3559,7 +3716,6 @@
                 return [String(y), String(y + 1)];
             });
             const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-            const [identityReset, setIdentityReset] = useState(false);
             
             const currentPeriod = useMemo(() => getFormattedPeriod(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
 
@@ -3680,12 +3836,7 @@
                 if (role !== 'admin') return;
                 try {
                     await window.firebaseAuth.signOut(window.auth);
-                    // 로그아웃한 익명 계정은 되살릴 수 없다. 여기서 새 uid 가
-                    // 발급되므로, 그 전에 이 브라우저에서 쓴 글은 더 이상
-                    // '내 글' 로 잡히지 않는다. 아무 설명 없이 삭제 버튼만
-                    // 사라지면 고장으로 보이므로 무슨 일이 있었는지 알린다.
                     await window.firebaseAuth.signInAnonymously(window.auth);
-                    setIdentityReset(true);
                 } catch (e) { console.error(e); }
                 setRole('employee');
             };
@@ -3734,21 +3885,6 @@
                             </div>
                         </header>
 
-                        {identityReset && role === 'employee' && (
-                            <div className="mb-5 bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 flex items-start gap-2.5 no-print">
-                                <Icon name="info" size={16} className="text-brand-600 mt-0.5 flex-shrink-0" />
-                                <p className="text-xs text-slate-700 leading-relaxed flex-1">
-                                    <span className="font-bold">익명 신분이 새로 발급되었습니다.</span>{' '}
-                                    관리자로 로그인하면 이 브라우저의 익명 신분이 바뀝니다. 그보다 전에 쓰신 글은
-                                    더 이상 ‘내 글’로 표시되지 않아 구성원 모드에서는 지우실 수 없습니다.
-                                    그 글들은 관리자 모드에서 지우실 수 있습니다.
-                                </p>
-                                <button onClick={() => setIdentityReset(false)} aria-label="안내 닫기"
-                                        className="text-slate-400 hover:text-brand-600 flex-shrink-0">
-                                    <Icon name="x" size={15} />
-                                </button>
-                            </div>
-                        )}
                         
                         {currentView === 'board' && <BoardView user={user} role={role} setView={setCurrentView} />}
 
