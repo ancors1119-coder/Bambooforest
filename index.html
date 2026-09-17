@@ -1443,7 +1443,7 @@
                                 <span className="font-bold">게시판 글은 내용만으로 신원이 드러날 수 있습니다.</span> 시스템은 신원을 수집하지 않지만, 날짜·부서·상황을 자세히 적으시면 내용만으로 특정될 수 있습니다. 필요한 만큼만 적어주세요.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
-                                <span className="font-bold">게시판 글은 쓰신 브라우저에서만 삭제할 수 있습니다.</span> 익명 유지를 위해 작성자 정보를 저장하지 않고, 대신 글을 쓴 브라우저만 본인임을 증명할 수 있게 해두었기 때문입니다.
+<span className="font-bold">글을 쓸 때 정한 4자리 비밀번호가 삭제 열쇠입니다.</span> 작성자 정보를 저장하지 않는 대신, 이 번호를 아는 사람만 지울 수 있습니다. 회사 PC, 집, 휴대폰 어디서든 됩니다. 잊으시면 본인도 지울 수 없으니 관리자에게 요청하셔야 합니다.
                             </li>
                             <li className="text-sm text-slate-700 leading-relaxed">
                                 <span className="font-bold">긴급한 상황은 고충 접수를 이용해주세요.</span> 게시판은 전체에게 공개되며, 조사나 보호조치로 이어지지 않습니다.
@@ -1623,11 +1623,75 @@
             return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
         };
 
-        const makeAnonTag = async (nonce, uid) => {
+        // 익명 표식. 같은 글 안에서 '작성자 / 익명1 / 익명2' 를 구분하고, 내가
+        // 누른 공감을 알아보는 데 쓴다. 글마다 다른 nonce 를 섞으므로 같은
+        // 사람이 써도 글끼리 묶이지 않는다.
+        //
+        // 예전에는 여기에 익명 uid 를 섞고 삭제 권한까지 이 값에 묶었다.
+        // 그래서 관리자 로그인 한 번이나 기기 변경만으로 자기 글을 못 지우게
+        // 됐다. 이제 삭제는 비밀번호가 맡는다. 이 표식에는 아무 권한이 없다.
+        const makeAnonTag = async (nonce, key) => {
             if (!window.crypto?.subtle) throw new Error('보안 연결(HTTPS)에서만 게시판을 사용할 수 있습니다.');
-            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${uid}`);
+            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${key}`);
             const buf = await window.crypto.subtle.digest('SHA-256', data);
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+        };
+
+        // 표식을 만드는 씨앗. 이 브라우저 안에만 있고 권한이 없으므로, 잃어도
+        // 삭제에는 지장이 없다(비밀번호만 알면 어디서든 지운다).
+        const TAG_KEY_STORAGE = 'bambooforest-tag-key-v1';
+        const getTagKey = () => {
+            let k = '';
+            try { k = String(localStorage.getItem(TAG_KEY_STORAGE) || ''); } catch (e) { /* 저장소 막힘 */ }
+            if (!/^[0-9a-f]{32}$/.test(k)) {
+                const a = new Uint8Array(16);
+                window.crypto.getRandomValues(a);
+                k = Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+                try { localStorage.setItem(TAG_KEY_STORAGE, k); } catch (e) { /* 저장소 막힘 */ }
+            }
+            return k;
+        };
+
+        // 삭제 비밀번호의 해시. functions/index.js 의 pinHash 와 같아야 한다.
+        // 소금이 글마다 다르므로, 여러 사람이 같은 1234 를 써도 데이터로는
+        // 서로 구분되지 않는다.
+        const makePinHash = async (nonce, pin) => {
+            if (!window.crypto?.subtle) throw new Error('보안 연결(HTTPS)에서만 게시판을 사용할 수 있습니다.');
+            const data = new TextEncoder().encode(`${BOARD_SALT}:${nonce}:${pin}`);
+            const buf = await window.crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+
+        const isPin = (v) => /^[0-9]{4}$/.test(String(v || '').trim());
+
+        // 비밀번호 문서의 id. 글 id 를 쓰면 글을 읽는 사람이 그대로 알게 되므로
+        // 따로 난수를 쓴다(문서를 읽지는 못하지만 굳이 알려줄 이유도 없다).
+        const makeSecretId = () => {
+            const a = new Uint8Array(12);
+            window.crypto.getRandomValues(a);
+            return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+
+        // 내가 쓴 글 목록. 목록에 '내 글' 배지를 달고, 신고로 가려진 내 글을
+        // 계속 볼 수 있게 하는 용도다. 삭제 권한은 여기서 나오지 않는다.
+        // (권한은 비밀번호가 쥐고 있으므로 이 목록이 새어도 남이 지울 수 없다)
+        const MY_POSTS_STORAGE = 'bambooforest-my-posts-v1';
+        const readMyPostIds = () => {
+            try {
+                const v = JSON.parse(localStorage.getItem(MY_POSTS_STORAGE) || '[]');
+                return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+            } catch (e) { return []; }
+        };
+        const rememberMyPost = (id) => {
+            try {
+                const next = [id, ...readMyPostIds().filter(x => x !== id)].slice(0, 500);
+                localStorage.setItem(MY_POSTS_STORAGE, JSON.stringify(next));
+            } catch (e) { /* 저장소 막힘 */ }
+        };
+        const forgetMyPost = (id) => {
+            try {
+                localStorage.setItem(MY_POSTS_STORAGE, JSON.stringify(readMyPostIds().filter(x => x !== id)));
+            } catch (e) { /* 저장소 막힘 */ }
         };
 
         const timeAgo = (value) => {
@@ -1646,15 +1710,17 @@
             const [posts, setPosts] = useState([]);
             const [comments, setComments] = useState([]);
             const [selectedId, setSelectedId] = useState(null);
-            const [myTags, setMyTags] = useState({});      // postId -> 내 익명 태그
+            const [myTags, setMyTags] = useState({});      // postId -> 이 브라우저의 표식(공감·댓글 이름)
+            const [mineIds, setMineIds] = useState(() => new Set(readMyPostIds()));   // 내가 쓴 글(배지용)
             const [composing, setComposing] = useState(false);
-            const [draft, setDraft] = useState({ category: 'free', title: '', content: '' });
+            const [draft, setDraft] = useState({ category: 'free', title: '', content: '', pin: '' });
             const [sending, setSending] = useState(false);
             const [sort, setSort] = useState('new');
             const [pageSize, setPageSize] = useState(BOARD_PAGE_SIZE);
             const [reachedEnd, setReachedEnd] = useState(false);
             const [filter, setFilter] = useState('all');
             const [commentDraft, setCommentDraft] = useState("");
+            const [commentPin, setCommentPin] = useState("");
             const [searchInput, setSearchInput] = useState("");   // 입력칸 값
             const [searchTerm, setSearchTerm] = useState("");     // 실제로 검색에 쓰는 값
             const [searchPool, setSearchPool] = useState(null);   // 훑을 대상. null 이면 아직 못 받음
@@ -1733,26 +1799,31 @@
                 return [...seen.values()];
             }, [posts, searchPool]);
 
+            // 표식은 보여주기 위한 값이라 없어도 글은 읽힌다. 실패해도 넘어간다.
             useEffect(() => {
-                if (!user || tagTargets.length === 0) return;
+                if (tagTargets.length === 0) return;
                 let alive = true;
                 (async () => {
+                    const key = getTagKey();
                     const next = {};
                     for (const post of tagTargets) {
                         if (!post.nonce) continue;
-                        try { next[post.id] = await makeAnonTag(post.nonce, user.uid); } catch { /* HTTPS 아님 */ }
+                        try { next[post.id] = await makeAnonTag(post.nonce, key); } catch (e) { /* HTTPS 아님 */ }
                     }
                     if (alive) setMyTags(next);
                 })();
                 return () => { alive = false; };
-            }, [tagTargets, user]);
+            }, [tagTargets]);
+
+            // '내 글' 은 배지와 가려진 글 열람에만 쓴다. 삭제 권한은 비밀번호에 있다.
+            const isMine = (id) => mineIds.has(id);
 
             // 검색 결과에서 연 글은 posts 에 없을 수 있다.
             const selected = tagTargets.find(p => p.id === selectedId) || null;
 
             // 정렬·필터·개수는 서버 쿼리가 이미 처리했다.
             // 여기서는 블라인드된 글만 걷어낸다(관리자와 작성자 본인에게는 남긴다).
-            const readable = (p) => !isBlinded(p) || isAdmin || myTags[p.id] === p.authorTag;
+            const readable = (p) => !isBlinded(p) || isAdmin || isMine(p.id);
 
             // 검색 중에는 서버가 걸러 준 목록 대신 받아둔 풀을 쓴다.
             // 말머리와 정렬은 서버가 해 주던 일을 여기서 그대로 대신한다.
@@ -1766,11 +1837,11 @@
                     .sort((a, b) => sort === 'like'
                         ? (b.likeCount || 0) - (a.likeCount || 0)
                         : (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            }, [searchTerm, searchPool, filter, sort, isAdmin, myTags]);
+            }, [searchTerm, searchPool, filter, sort, isAdmin, mineIds]);
 
             const visiblePosts = useMemo(
                 () => searchHits || posts.filter(readable),
-                [searchHits, posts, isAdmin, myTags]
+                [searchHits, posts, isAdmin, mineIds]
             );
 
             // 머리말에 보여줄 숫자. 서버에서 가져온 '지금 목록'만 센다.
@@ -1789,16 +1860,25 @@
                 e.preventDefault();
                 const title = draft.title.trim().slice(0, BOARD_TITLE_MAX);
                 const content = draft.content.trim();
+                const pin = draft.pin.trim();
                 if (!title || !content || sending) return;
+                if (!isPin(pin)) return alert("삭제 비밀번호를 숫자 4자리로 정해주세요.");
                 setSending(true);
                 try {
                     const nonce = makeNonce();
-                    await window.firestore.addDoc(col('board_posts'), {
+                    // 비밀번호부터 저장한다. 이게 실패하면 글도 만들지 않는다.
+                    // 순서가 반대면 지울 수 없는 글이 남는다.
+                    const secretId = makeSecretId();
+                    await window.firestore.setDoc(
+                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'board_secrets', secretId),
+                        { hash: await makePinHash(nonce, pin), tries: 0, lockedUntil: 0 });
+                    const posted = await window.firestore.addDoc(col('board_posts'), {
                         title,
                         content,
                         category: draft.category,
                         nonce,
-                        authorTag: await makeAnonTag(nonce, user.uid),
+                        secretId,
+                        authorTag: await makeAnonTag(nonce, getTagKey()),
                         likedBy: [],
                         // likedBy 배열 길이로는 서버 정렬을 할 수 없어 개수를 따로 둔다.
                         likeCount: 0,
@@ -1811,7 +1891,11 @@
                         blindCleared: false,
                         createdAt: window.firestore.serverTimestamp()
                     });
-                    setDraft({ category: 'free', title: '', content: '' });
+                    if (posted?.id) {
+                        rememberMyPost(posted.id);
+                        setMineIds(prev => new Set(prev).add(posted.id));
+                    }
+                    setDraft({ category: 'free', title: '', content: '', pin: '' });
                     setComposing(false);
                 } catch (err) {
                     alert("등록 실패: " + err.message);
@@ -1823,20 +1907,28 @@
             const submitComment = async (e) => {
                 e.preventDefault();
                 const content = commentDraft.trim();
+                const pin = commentPin.trim();
                 if (!content || !selected || sending) return;
+                if (!isPin(pin)) return alert("삭제 비밀번호를 숫자 4자리로 정해주세요.");
                 setSending(true);
                 try {
+                    const commentSecretId = makeSecretId();
+                    await window.firestore.setDoc(
+                        window.firestore.doc(window.db, 'artifacts', APP_ID, 'public', 'data', 'board_secrets', commentSecretId),
+                        { hash: await makePinHash(selected.nonce, pin), tries: 0, lockedUntil: 0 });
                     await window.firestore.addDoc(col('board_comments'), {
                         postId: selected.id,
                         content,
                         // 댓글도 같은 글의 nonce 를 쓰므로, 같은 글 안에서만 동일인이 식별된다.
-                        authorTag: await makeAnonTag(selected.nonce, user.uid),
+                        secretId: commentSecretId,
+                        authorTag: await makeAnonTag(selected.nonce, getTagKey()),
                         createdAt: window.firestore.serverTimestamp()
                     });
                     await window.firestore.updateDoc(ref('board_posts', selected.id), {
                         commentCount: window.firestore.increment(1)
                     });
                     setCommentDraft("");
+                    setCommentPin("");
                 } catch (err) {
                     alert("등록 실패: " + err.message);
                 } finally {
@@ -1870,17 +1962,32 @@
                 alert("신고가 접수되었습니다.");
             };
 
-            // 삭제는 서버 함수가 맡는다. 함수가 호출자 uid 로 익명 태그를 다시 계산해
-            // 작성자 본인인지 확인하므로, 화면 코드를 고쳐도 남의 글은 지울 수 없다.
+            // 삭제는 서버 함수가 맡는다. 함수만이 비밀번호 해시를 읽을 수 있고,
+            // 틀린 횟수도 함수가 센다. 화면 코드를 고쳐도 찍어서 맞힐 수 없다.
+            //
+            // 관리자는 비밀번호 없이 지운다(신고 누적 글 정리 등).
+            const askPin = (what) => {
+                const v = prompt(`${what}을(를) 쓸 때 정하신 삭제 비밀번호 4자리를 입력해주세요.`);
+                if (v === null) return null;                       // 취소
+                if (!isPin(v)) { alert("숫자 4자리를 입력해주세요."); return null; }
+                return v.trim();
+            };
+
             const removePost = async (post) => {
-                if (!confirm("이 글을 삭제하시겠습니까? 삭제된 글은 복구할 수 없습니다.")) return;
+                let pin = null;
+                if (isAdmin) {
+                    if (!confirm("관리자 권한으로 이 글을 삭제합니다. 삭제된 글은 복구할 수 없습니다.")) return;
+                } else {
+                    pin = askPin('글');
+                    if (pin === null) return;
+                }
                 try {
-                    await window.callFn('deleteBoardPost', { postId: post.id });
+                    await window.callFn('deleteBoardPost', { postId: post.id, pin });
+                    forgetMyPost(post.id);
+                    setMineIds(prev => { const n = new Set(prev); n.delete(post.id); return n; });
                     setSelectedId(null);
                 } catch (e) {
-                    alert(e.code === 'functions/permission-denied'
-                        ? "본인이 쓴 글만 삭제할 수 있습니다."
-                        : "삭제 실패: " + (e.message || e));
+                    alert(e.message || "삭제에 실패했습니다.");
                 }
             };
 
@@ -1893,20 +2000,24 @@
             };
 
             const removeComment = async (comment) => {
-                if (!confirm("이 댓글을 삭제하시겠습니까?")) return;
+                let pin = null;
+                if (isAdmin) {
+                    if (!confirm("관리자 권한으로 이 댓글을 삭제합니다.")) return;
+                } else {
+                    pin = askPin('댓글');
+                    if (pin === null) return;
+                }
                 try {
-                    await window.callFn('deleteBoardComment', { commentId: comment.id });
+                    await window.callFn('deleteBoardComment', { commentId: comment.id, pin });
                 } catch (e) {
-                    alert(e.code === 'functions/permission-denied'
-                        ? "본인이 쓴 댓글만 삭제할 수 있습니다."
-                        : "삭제 실패: " + (e.message || e));
+                    alert(e.message || "삭제에 실패했습니다.");
                 }
             };
 
             // ── 글 상세 ──────────────────────────────────────────────
             if (selected) {
                 const myTag = myTags[selected.id];
-                const mine = myTag && myTag === selected.authorTag;
+                const mine = isMine(selected.id);
                 const liked = myTag && (selected.likedBy || []).includes(myTag);
                 const sorted = comments.slice().sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
                 // 같은 글 안에서 등장 순서대로 익명1, 익명2… 를 붙인다.
@@ -1969,9 +2080,7 @@
                                 {!mine && (
                                     <button onClick={() => reportPost(selected)} className="text-xs font-bold text-slate-400 hover:text-red-600 px-2 py-2">신고</button>
                                 )}
-                                {(mine || isAdmin) && (
-                                    <button onClick={() => removePost(selected)} className="text-xs font-bold text-red-700 border border-red-200 px-3 py-2 rounded-lg hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors">삭제</button>
-                                )}
+                                <button onClick={() => removePost(selected)} className="text-xs font-bold text-red-700 border border-red-200 px-3 py-2 rounded-lg hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors">삭제</button>
                                 {isAdmin && (
                                     <button onClick={() => setHidden(selected, !isBlinded(selected))} className="text-xs font-bold text-slate-600 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100">
                                         {isBlinded(selected) ? "숨김 해제" : "숨기기"}
@@ -1992,9 +2101,7 @@
                                                 <span className={`text-xs font-bold ${c.authorTag === selected.authorTag ? 'text-brand-700' : 'text-slate-600'}`}>{nameOf(c.authorTag)}</span>
                                                 <span className="text-[11px] text-slate-400">{timeAgo(c.createdAt)}</span>
                                                 <div className="flex-1"></div>
-                                                {(isMine || isAdmin) && (
-                                                    <button onClick={() => removeComment(c)} className="text-[11px] font-bold text-slate-400 hover:text-red-600">삭제</button>
-                                                )}
+                                                <button onClick={() => removeComment(c)} className="text-[11px] font-bold text-slate-400 hover:text-red-600">삭제</button>
                                             </div>
                                             <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{c.content}</p>
                                         </div>
@@ -2002,8 +2109,15 @@
                                 })}
                             </div>
                             <form onSubmit={submitComment} className="flex gap-2">
-                                <input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="익명으로 댓글 남기기…" className="flex-1 border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" />
-                                <button type="submit" disabled={!commentDraft.trim() || sending} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">등록</button>
+                                <input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="익명으로 댓글 남기기…" className="flex-1 min-w-[140px] border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" />
+                                <input
+                                    value={commentPin}
+                                    onChange={e => setCommentPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                                    inputMode="numeric" autoComplete="off" placeholder="비번"
+                                    aria-label="댓글 삭제 비밀번호 4자리"
+                                    className="w-[76px] border border-slate-200 rounded-lg px-2 py-2.5 text-sm text-center tracking-[0.25em] font-bold bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                />
+                                <button type="submit" disabled={!commentDraft.trim() || !isPin(commentPin) || sending} className="bg-brand-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">등록</button>
                             </form>
                         </div>
                         </div>
@@ -2075,10 +2189,20 @@
                                     </span>
                                 </div>
                                 <textarea value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} rows="5" placeholder="하고 싶은 이야기를 자유롭게 남겨주세요. 특정 개인을 알아볼 수 있는 내용은 피해주세요." className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-sm resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200" />
-                                <div className="flex items-center gap-2 mt-3">
-                                    <p className="text-xs text-slate-400 flex-1">등록 후에는 이 브라우저에서만 삭제할 수 있습니다.</p>
-                                    <button type="button" onClick={() => { setComposing(false); setDraft({ category: 'free', title: '', content: '' }); }} className="px-4 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">취소</button>
-                                    <button type="submit" disabled={!draft.title.trim() || !draft.content.trim() || sending} className="bg-brand-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">{sending ? "등록 중" : "등록"}</button>
+                                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                                    <div className="flex items-center gap-2">
+                                        <label htmlFor="post-pin" className="text-xs font-bold text-slate-600 whitespace-nowrap">삭제 비밀번호</label>
+                                        <input
+                                            id="post-pin"
+                                            value={draft.pin}
+                                            onChange={e => setDraft({ ...draft, pin: e.target.value.replace(/[^0-9]/g, '').slice(0, 4) })}
+                                            inputMode="numeric" autoComplete="off" placeholder="숫자 4자리"
+                                            className="w-[92px] border border-slate-200 rounded-lg px-3 py-2 text-sm text-center tracking-[0.3em] font-bold bg-white focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                                        />
+                                    </div>
+                                    <p className="text-xs text-slate-400 flex-1 min-w-[200px] leading-relaxed">이 번호를 아는 사람만 글을 지울 수 있습니다. 어느 기기에서든 됩니다. 잊으시면 본인도 지우지 못합니다.</p>
+                                    <button type="button" onClick={() => { setComposing(false); setDraft({ category: 'free', title: '', content: '', pin: '' }); }} className="px-4 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">취소</button>
+                                    <button type="submit" disabled={!draft.title.trim() || !draft.content.trim() || !isPin(draft.pin) || sending} className="bg-brand-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-brand-700 disabled:opacity-40 transition-colors">{sending ? "등록 중" : "등록"}</button>
                                 </div>
                             </form>
                         )}
@@ -2147,7 +2271,7 @@
                         <div className={`grid grid-cols-1 gap-3 ${visiblePosts.length + (showWritePrompt ? 1 : 0) > 1 ? 'xl:grid-cols-2' : ''}`}>
                         {visiblePosts.map((post, i) => {
                             const myTag = myTags[post.id];
-                            const mine = myTag && myTag === post.authorTag;
+                            const mine = isMine(post.id);
                             const liked = myTag && (post.likedBy || []).includes(myTag);
                             const cat = getBoardCategory(post.category);
                             return (
@@ -3526,7 +3650,7 @@
                                         <span className="text-[11px] font-extrabold">익명 보장</span>
                                     </div>
                                     <p className="text-[11px] text-slate-500 leading-relaxed mt-1.5">
-                                        이름·부서를 받지 않습니다. 글마다 다른 표식이 붙어, 같은 사람이 쓴 글끼리도 서로 연결되지 않습니다.
+                                        이름·부서를 받지 않습니다. 글마다 다른 표식이 붙어, 같은 사람이 쓴 글끼리도 서로 연결되지 않습니다. 삭제는 글 쓸 때 정한 4자리 비밀번호로만 합니다.
                                     </p>
                                 </div>
                             )}
